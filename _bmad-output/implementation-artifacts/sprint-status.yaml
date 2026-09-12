@@ -65,3 +65,7 @@ development_status:
   4-3-browse-and-filter-session-history: backlog
   4-4-present-a-durable-session-history-experience: backlog
   epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-host-auth-and-review-hardening: backlog
+  epic-5-retrospective: optional

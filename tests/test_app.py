@@ -14,6 +14,8 @@ from sqlmodel import Session, select
 from backend.main import app
 from backend.db.engine import engine
 from backend.models import Content, PipelineState, Rulebook
+from backend.workers.extraction import run_extraction
+from backend.workers.generation import run_generation
 
 
 def test_game_creation_and_validation():
@@ -96,3 +98,57 @@ def test_generation_blocks_when_api_key_is_missing_after_extraction():
         response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
         assert response.status_code == 422
         assert 'API key' in response.json()['detail']
+
+
+def test_stale_extraction_worker_ignores_replaced_rulebook():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Stale extraction game'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
+            content.pipeline_state = PipelineState.extracting
+            stale_rulebook = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/stale.pdf')
+            db.add(stale_rulebook)
+            db.add(content)
+            db.commit()
+            stale_id = stale_rulebook.id
+        with Session(engine) as db:
+            stale_rulebook = db.get(Rulebook, stale_id)
+            db.delete(stale_rulebook)
+            db.commit()
+            replacement = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/replacement.pdf')
+            db.add(replacement)
+            db.commit()
+        run_extraction(game['id'], stale_id)
+        with Session(engine) as db:
+            row = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).first()
+            assert row is not None
+            assert row.pdf_path.endswith('replacement.pdf')
+            assert row.extracted_text_path is None
+
+
+def test_stale_generation_worker_ignores_replaced_rulebook():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Stale generation game'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.ready_to_generate
+            stale_rulebook = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/stale-generate.pdf', extracted_text_path='tests/.data/stale.txt')
+            db.add(stale_rulebook)
+            db.add(content)
+            db.commit()
+            stale_id = stale_rulebook.id
+        with Session(engine) as db:
+            stale_rulebook = db.get(Rulebook, stale_id)
+            db.delete(stale_rulebook)
+            db.commit()
+            replacement = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/replacement-generate.pdf', extracted_text_path='tests/.data/generated.txt')
+            db.add(replacement)
+            db.commit()
+        import asyncio
+        asyncio.run(run_generation(game['id'], stale_id))
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
+            assert content.pipeline_state == PipelineState.generating
+            assert content.draft_quickstart_md is None
+            assert content.draft_cheat_sheet_md is None

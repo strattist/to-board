@@ -143,7 +143,7 @@ def generate(game_id: str, body: GenerationRequest, background_tasks: Background
     content = get_or_create(session, game_id)
     if content.pipeline_state == PipelineState.generating: raise HTTPException(409, 'Content generation is already in progress.')
     begin_generation(session, game_id)
-    session.commit(); background_tasks.add_task(run_generation, game_id)
+    session.commit(); background_tasks.add_task(run_generation, game_id, rulebook.id)
     return payload(session, game)
 
 @router.get('/{game_id}/content')
