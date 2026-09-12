@@ -1,11 +1,9 @@
-from functools import lru_cache
 from typing import Any
 import httpx
 import jwt
 from fastapi import Header, HTTPException, status
 from backend.core.config import get_settings
 
-@lru_cache
 def _jwks() -> dict[str, Any]:
     settings = get_settings()
     issuer = settings.authentik_issuer.rstrip('/')
@@ -14,7 +12,7 @@ def _jwks() -> dict[str, Any]:
         try:
             response = httpx.get(url, timeout=5)
             if response.is_success: return response.json()
-        except httpx.HTTPError: continue
+        except (httpx.HTTPError, ValueError): continue
     raise HTTPException(status_code=503, detail='Host identity provider is unavailable.')
 
 async def require_host(authorization: str | None = Header(default=None)) -> dict:

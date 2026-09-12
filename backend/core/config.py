@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     uploads_path: Path = Path('/data/uploads')
     authentik_issuer: str = ''
     authentik_audience: str = ''
-    secret_key: str = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+    secret_key: str
     llm_provider: str = 'anthropic'
     anthropic_model: str = 'claude-3-5-haiku-latest'
     google_model: str = 'gemini-2.0-flash'

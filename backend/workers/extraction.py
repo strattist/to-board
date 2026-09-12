@@ -15,6 +15,9 @@ def run_extraction(game_id: str, rulebook_id: str) -> None:
         output = str(Path(rulebook.pdf_path).with_suffix('.txt'))
         try:
             extract_pdf(rulebook.pdf_path, output)
+            current = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
+            if not current or current.id != rulebook_id:
+                return
             rulebook.extracted_text_path = output
             session.add(rulebook)
             mark_extraction_complete(session, game_id)

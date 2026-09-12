@@ -139,6 +139,7 @@ def generate(game_id: str, body: GenerationRequest, background_tasks: Background
     if not game: raise HTTPException(404, 'Game not found.')
     if not rulebook or not rulebook.extracted_text_path: raise HTTPException(422, 'Rulebook extraction is not complete.')
     if not settings or not settings.api_key_encrypted: raise HTTPException(422, 'API key is missing — add one in Settings.')
+    if not body.confirm: raise HTTPException(400, 'Confirmation required.')
     content = get_or_create(session, game_id)
     if content.pipeline_state == PipelineState.generating: raise HTTPException(409, 'Content generation is already in progress.')
     begin_generation(session, game_id)

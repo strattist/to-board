@@ -12,6 +12,9 @@ async def run_generation(game_id: str) -> None:
         rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
         settings = session.get(AppSettings, 1)
         if not content or not rulebook or not rulebook.extracted_text_path or not settings:
+            if content:
+                generation_failed(session, content, 'Generation prerequisites are no longer available.')
+                session.commit()
             return
         try:
             text = Path(rulebook.extracted_text_path).read_text(encoding='utf-8')
