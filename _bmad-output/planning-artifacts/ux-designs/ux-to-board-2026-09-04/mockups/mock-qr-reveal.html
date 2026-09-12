@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>to-board — QR Reveal: Wingspan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #15141b;
+    color: #edecee;
+    font-family: 'DM Sans', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Blurred cover art backdrop */
+  .backdrop {
+    position: absolute;
+    inset: -20px;
+    background:
+      linear-gradient(135deg,
+        #0c2a44 0%,
+        #1a4a6e 20%,
+        #0d3a5c 35%,
+        #1e5a7e 50%,
+        #2a3a5e 65%,
+        #1a2e4e 80%,
+        #3a4a2e 100%
+      );
+    filter: blur(40px) brightness(0.38);
+    transform: scale(1.1);
+  }
+
+  /* Vignette overlay */
+  .vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 30%, rgba(21,20,27,0.55) 100%);
+    pointer-events: none;
+  }
+
+  /* Exit button */
+  .exit-btn {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    z-index: 10;
+    background: rgba(30,28,39,0.6);
+    border: 1px solid #29263c;
+    border-radius: 8px;
+    color: #6d6d6d;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 150ms, border-color 150ms;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .exit-btn:hover { color: #edecee; border-color: #6d6d6d; }
+
+  /* Center layout */
+  .center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+  }
+
+  /* Panel */
+  .panel {
+    background: rgba(21, 20, 27, 0.78);
+    border: 1px solid #3d375e;
+    border-radius: 20px;
+    padding: 40px 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    box-shadow:
+      0 0 48px rgba(162,119,255,0.18),
+      0 0 120px rgba(162,119,255,0.10),
+      0 8px 64px rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    max-width: 480px;
+    width: 90%;
+  }
+
+  /* QR code */
+  .qr-wrap {
+    background: #edecee;
+    border-radius: 12px;
+    padding: 12px;
+    width: 280px;
+    height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .qr-svg {
+    width: 256px;
+    height: 256px;
+  }
+
+  /* Game title */
+  .game-title {
+    font-size: 48px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #edecee;
+    text-align: center;
+    line-height: 1.1;
+  }
+
+  /* URL row */
+  .url-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .room-url {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: #6d6d6d;
+    letter-spacing: 0.02em;
+  }
+
+  .copy-btn {
+    background: transparent;
+    border: 1px solid #29263c;
+    border-radius: 8px;
+    color: #6d6d6d;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: color 150ms, border-color 150ms;
+  }
+  .copy-btn:hover { color: #edecee; border-color: #6d6d6d; }
+</style>
+</head>
+<body>
+
+<div class="backdrop"></div>
+<div class="vignette"></div>
+
+<button class="exit-btn" title="Exit session view">×</button>
+
+<div class="center">
+  <div class="panel">
+
+    <!-- QR Code (realistic-looking pattern) -->
+    <div class="qr-wrap">
+      <svg class="qr-svg" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+        <!-- Background -->
+        <rect width="256" height="256" fill="#edecee"/>
+        <!-- Top-left finder -->
+        <rect x="8" y="8" width="56" height="56" rx="4" fill="#15141b"/>
+        <rect x="16" y="16" width="40" height="40" rx="2" fill="#edecee"/>
+        <rect x="24" y="24" width="24" height="24" rx="1" fill="#15141b"/>
+        <!-- Top-right finder -->
+        <rect x="192" y="8" width="56" height="56" rx="4" fill="#15141b"/>
+        <rect x="200" y="16" width="40" height="40" rx="2" fill="#edecee"/>
+        <rect x="208" y="24" width="24" height="24" rx="1" fill="#15141b"/>
+        <!-- Bottom-left finder -->
+        <rect x="8" y="192" width="56" height="56" rx="4" fill="#15141b"/>
+        <rect x="16" y="200" width="40" height="40" rx="2" fill="#edecee"/>
+        <rect x="24" y="208" width="24" height="24" rx="1" fill="#15141b"/>
+        <!-- Data modules — a plausible-looking pattern -->
+        <!-- Row patterns (simplified QR-like data) -->
+        <rect x="80" y="8"   width="8" height="8" fill="#15141b"/>
+        <rect x="96" y="8"   width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="8"  width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="8"  width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="8"  width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="8"  width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="16" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="16" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="16" width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="16" width="8" height="8" fill="#15141b"/>
+        <rect x="80"  y="24" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="24" width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="24" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="24" width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="32" width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="32" width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="32" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="32" width="8" height="8" fill="#15141b"/>
+        <rect x="80"  y="40" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="40" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="40" width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="40" width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="48" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="48" width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="48" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="48" width="8" height="8" fill="#15141b"/>
+        <!-- Timing pattern -->
+        <rect x="72" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="88" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="72" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="80" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="88" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="96" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="128" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="136" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="144" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="152" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="160" width="8" height="8" fill="#15141b"/>
+        <rect x="72" y="168" width="8" height="8" fill="#15141b"/>
+        <!-- Data area modules -->
+        <rect x="88"  y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="184" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="200" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="216" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="240" y="80"  width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="176" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="208" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="232" y="88"  width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="192" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="216" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="240" y="96"  width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="176" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="200" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="224" y="104" width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="184" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="208" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="232" y="112" width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="192" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="216" y="120" width="8" height="8" fill="#15141b"/>
+        <rect x="240" y="120" width="8" height="8" fill="#15141b"/>
+        <!-- Bottom data rows -->
+        <rect x="88"  y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="184" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="208" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="232" y="192" width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="192" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="216" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="240" y="200" width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="176" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="200" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="224" y="208" width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="136" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="160" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="184" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="208" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="232" y="216" width="8" height="8" fill="#15141b"/>
+        <rect x="88"  y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="104" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="120" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="144" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="168" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="192" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="216" y="224" width="8" height="8" fill="#15141b"/>
+        <rect x="96"  y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="112" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="128" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="152" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="176" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="200" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="224" y="240" width="8" height="8" fill="#15141b"/>
+        <rect x="240" y="240" width="8" height="8" fill="#15141b"/>
+      </svg>
+    </div>
+
+    <div class="game-title">Wingspan</div>
+
+    <div class="url-row">
+      <span class="room-url">to-board.local/room/wingspan-3f2a</span>
+      <button class="copy-btn">Copy URL</button>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

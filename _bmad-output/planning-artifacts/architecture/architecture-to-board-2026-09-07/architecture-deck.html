@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>to-board — Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #15141b;
+    --surface: #1e1c27;
+    --surface-raised: #29263c;
+    --fg: #edecee;
+    --fg-muted: #6d6d6d;
+    --primary: #a277ff;
+    --primary-dim: #3d375e;
+    --primary-glow: rgba(162,119,255,0.2);
+    --success: #61ffca;
+    --warning: #ffca85;
+    --error: #ff6767;
+    --border: #29263c;
+    --accent-blue: #82e2ff;
+    --font: 'DM Sans', system-ui, sans-serif;
+    --mono: 'DM Mono', 'Fira Code', monospace;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 56px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 32px;
+    gap: 24px;
+    z-index: 100;
+  }
+  nav .wordmark {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    letter-spacing: -0.01em;
+    margin-right: auto;
+  }
+  nav .wordmark span { color: var(--fg-muted); font-weight: 400; }
+  nav a {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg-muted);
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    transition: color 120ms, background 120ms;
+  }
+  nav a:hover { color: var(--fg); background: var(--surface-raised); }
+  nav a.active { color: var(--primary); background: var(--primary-dim); }
+
+  /* ── LAYOUT ── */
+  .page-wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 88px 32px 80px;
+  }
+
+  /* ── SECTION ── */
+  section {
+    margin-bottom: 80px;
+    scroll-margin-top: 72px;
+  }
+  section h2 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--fg);
+    margin: 32px 0 12px;
+  }
+  p { margin-bottom: 16px; color: var(--fg); }
+
+  /* ── HERO ── */
+  .hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 40px 48px;
+    margin-bottom: 48px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -60px; right: -60px;
+    width: 260px; height: 260px;
+    background: radial-gradient(circle, var(--primary-glow) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero h1 {
+    font-size: 32px;
+    font-weight: 600;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+  }
+  .hero .sub {
+    font-size: 14px;
+    color: var(--fg-muted);
+    margin-bottom: 24px;
+  }
+  .hero .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  .meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .meta-item .label { font-size: 11px; font-weight: 500; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta-item .value { font-size: 13px; color: var(--fg); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .badge-primary { background: var(--primary-dim); color: var(--primary); }
+  .badge-success { background: rgba(97,255,202,0.1); color: var(--success); }
+
+  /* ── AD CARD ── */
+  .ad-grid { display: flex; flex-direction: column; gap: 16px; }
+  .ad-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 28px;
+    position: relative;
+    transition: border-color 150ms;
+  }
+  .ad-card:hover { border-color: var(--primary-dim); }
+  .ad-card .ad-id {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .ad-card .ad-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 16px;
+  }
+  .ad-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .ad-meta-item { display: flex; flex-direction: column; gap: 3px; }
+  .ad-meta-item .k { font-size: 11px; font-weight: 500; color: var(--fg-muted); }
+  .ad-meta-item .v { font-size: 13px; color: var(--fg); }
+  .ad-rule {
+    background: var(--surface-raised);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: var(--fg);
+    line-height: 1.6;
+  }
+  .ad-rule strong { color: var(--primary); }
+
+  /* ── TABLE ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+  th {
+    text-align: left;
+    padding: 10px 16px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(41,38,60,0.5);
+    color: var(--fg);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  td code, th code { font-family: var(--mono); font-size: 12px; color: var(--primary); background: var(--primary-dim); padding: 1px 5px; border-radius: 4px; }
+
+  /* ── CODE BLOCK ── */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--fg);
+    overflow-x: auto;
+    margin-bottom: 24px;
+  }
+  pre .comment { color: var(--fg-muted); }
+
+  /* ── DIAGRAM ── */
+  .diagram-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+  }
+  .diagram-wrap .mermaid { display: flex; justify-content: center; }
+
+  /* ── CONVENTIONS ── */
+  .conv-grid { display: flex; flex-direction: column; gap: 8px; }
+  .conv-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+  }
+  .conv-row .conv-key { font-weight: 500; color: var(--fg-muted); }
+  .conv-row .conv-val { color: var(--fg); }
+
+  /* ── DEFERRED ── */
+  .deferred-list { display: flex; flex-direction: column; gap: 10px; }
+  .deferred-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+  }
+  .deferred-item::before {
+    content: '↓';
+    color: var(--fg-muted);
+    font-size: 14px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── STACK PILL ── */
+  .stack-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+  .stack-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  .stack-pill .sp-name { font-weight: 500; color: var(--fg); }
+  .stack-pill .sp-ver { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); }
+
+  /* ── SCROLLSPY ACTIVE ── */
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="wordmark">to-board <span>/ architecture</span></span>
+  <a href="#overview">Overview</a>
+  <a href="#invariants">Invariants</a>
+  <a href="#diagrams">Diagrams</a>
+  <a href="#stack">Stack</a>
+  <a href="#conventions">Conventions</a>
+  <a href="#capabilities">Capabilities</a>
+  <a href="#deferred">Deferred</a>
+</nav>
+
+<div class="page-wrap">
+
+  <!-- HERO -->
+  <div class="hero">
+    <h1>to-board — Architecture Spine</h1>
+    <p class="sub">Build substrate for the full to-board initiative (FR-1 – FR-20). Invariants only — the calls a future builder can't read off compliant code.</p>
+    <div class="meta-grid">
+      <div class="meta-item"><span class="label">Altitude</span><span class="value">Initiative → Features</span></div>
+      <div class="meta-item"><span class="label">Paradigm</span><span class="value">Layered monolith + compiled frontend</span></div>
+      <div class="meta-item"><span class="label">Status</span><span class="value"><span class="badge badge-success">Final</span></span></div>
+      <div class="meta-item"><span class="label">Date</span><span class="value">2026-09-07</span></div>
+      <div class="meta-item"><span class="label">ADs</span><span class="value">9 decisions</span></div>
+      <div class="meta-item"><span class="label">Deployment</span><span class="value">Docker Compose on TrueNAS SCALE</span></div>
+    </div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <h2>Overview</h2>
+    <p>
+      to-board is a single-user, LAN-only board game night companion. The architecture reflects that: boring technology, minimal moving parts, maximum data durability. The Host (Baptiste) is the only authenticated user. Guests are anonymous readers on the same LAN.
+    </p>
+    <p>
+      The paradigm is a <strong style="color:var(--primary)">layered monolith with a compiled frontend</strong>. A single Python process (FastAPI) owns all business logic, data, and background work. The Svelte frontend compiles to static files — no server-side rendering, no Node process at runtime. nginx sits in front.
+    </p>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+graph LR
+    nginx["nginx\n(web container)"] -->|"/api/*"| api["FastAPI\n(api container)"]
+    nginx -->|"static"| spa["Svelte SPA\n(compiled build)"]
+    spa -->|"fetch /api/*"| nginx
+    api --> sqlite[("SQLite\nto-board-db dataset")]
+    api --> uploads[("PDFs + text cache\nto-board-uploads dataset")]
+    api -.->|"HTTPS — generation only"| llm["Cloud LLM API"]
+    api -.->|"HTTPS — startup JWKS"| authentik["Authentik\n(LAN OIDC)"]
+      </div>
+    </div>
+    <p>
+      Two containers. Two named TrueNAS dataset bind mounts. No cloud calls at runtime game nights — only when the Host explicitly triggers content generation.
+    </p>
+    <h3>Dependency direction</h3>
+    <p style="font-size:14px; color: var(--fg-muted)">
+      <code style="font-family:var(--mono); font-size:13px; color:var(--primary)">routers → services → models/workers → db</code>
+      &nbsp;&nbsp;Workers call services to persist results. Nothing flows upward.
+    </p>
+  </section>
+
+  <!-- INVARIANTS -->
+  <section id="invariants">
+    <h2>Invariants &amp; Rules</h2>
+    <p style="font-size:14px; color:var(--fg-muted); margin-bottom:24px;">Nine architectural decisions. These are the calls a future builder can't read off compliant code — each prevents a specific class of divergence.</p>
+
+    <div class="ad-grid">
+
+      <div class="ad-card">
+        <div class="ad-id">AD-1</div>
+        <div class="ad-title">Application paradigm: Python backend + compiled Svelte frontend</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">All features</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Node.js backend; SSR frontend; two backend languages</span></div>
+        </div>
+        <div class="ad-rule">
+          Backend is Python-only (FastAPI + Uvicorn). Frontend is a compiled Svelte SPA served as static files by nginx. No Node.js process runs at runtime. Monorepo: <strong>backend/</strong> and <strong>frontend/</strong> directories only.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-2</div>
+        <div class="ad-title">Database: SQLite, single file, SQLModel ORM</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-1, FR-2, FR-4, FR-5, FR-7, FR-9–18</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Two data stores; PostgreSQL; raw sqlite3</span></div>
+        </div>
+        <div class="ad-rule">
+          All structured data in a single SQLite file at <strong>/data/db/to-board.db</strong>. All access goes through SQLModel models. No second database engine is permitted.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-3</div>
+        <div class="ad-title">Persistent storage: two named TrueNAS datasets, never Docker volumes</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">NFR-4, FR-2, FR-6, FR-15, FR-18</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Any persistent file in a Docker-managed volume (lost on rebuild)</span></div>
+        </div>
+        <div class="ad-rule">
+          Two bind mounts, one per dataset:<br>
+          &nbsp;&nbsp;<strong>to-board-db</strong> → <code>/data/db/</code> — SQLite file<br>
+          &nbsp;&nbsp;<strong>to-board-uploads</strong> → <code>/data/uploads/</code> — PDFs and extracted-text cache<br>
+          No <code>volumes:</code> key in docker-compose.yml for persistent data.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-4</div>
+        <div class="ad-title">Content stored as Markdown text in SQLite</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-5, FR-7, FR-8, FR-13</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Content as separate files; HTML (XSS risk from LLM output)</span></div>
+        </div>
+        <div class="ad-rule">
+          CONTENT table has <strong>draft_quickstart_md</strong>, <strong>draft_cheat_sheet_md</strong>, <strong>published_quickstart_md</strong>, <strong>published_cheat_sheet_md</strong> TEXT columns. LLM instructed to return Markdown. Frontend renders to HTML client-side (sanitized). Content is human-editable via DB Browser for SQLite if a manual fix is needed.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-5</div>
+        <div class="ad-title">Pipeline state machine enforced server-side only</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-5, FR-7, FR-10, FR-14 — all Content pipeline</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Frontend asserting state; double-fire of transitions; multiple published rows per game</span></div>
+        </div>
+        <div class="ad-rule">
+          All <strong>Content.pipeline_state</strong> transitions in <code>backend/services/content.py</code>. Invalid transitions → HTTP 409.<br><br>
+          Ownership: <strong>no_rulebook → extracting</strong> is fired by the upload service before enqueuing the extraction worker. The extraction worker must NOT re-fire it.<br><br>
+          Cardinality: UNIQUE on <strong>CONTENT.game_id</strong> — one row per game. The <strong>published_*</strong> columns survive regeneration intact until a new publish overwrites them. Guest content is always read from <strong>published_*</strong>.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-6</div>
+        <div class="ad-title">Background job model: in-process async, no separate worker</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-5, FR-6 (PDF extraction + LLM generation)</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Celery / Redis; ambiguous startup recovery; extraction worker path not persisted</span></div>
+        </div>
+        <div class="ad-rule">
+          PDF extraction via <strong>asyncio.run_in_executor</strong> (pdfplumber is sync). LLM generation via <strong>asyncio.create_task</strong>. Both via FastAPI BackgroundTasks.<br><br>
+          <strong>prior_pipeline_state</strong> TEXT column written on every state transition. Startup recovery reads it — no hardcoded predecessor assumptions.<br><br>
+          Extraction worker writes <strong>RULEBOOK.extracted_text_path</strong> before transitioning state. Generation worker reads exclusively from that column — no path reconstruction from IDs.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-7</div>
+        <div class="ad-title">Real-time model: SSE for Guest session-end only; polling for pipeline state</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-14, FR-5/6 pipeline updates</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">WebSocket; polling for session-end; SSE for pipeline state</span></div>
+        </div>
+        <div class="ad-rule">
+          <strong>GET /api/room/:slug/events</strong> — one SSE connection per Guest. Server pushes <code>event: session-ended</code> on session close.<br><br>
+          Pipeline state (extraction, generation) — frontend polls <strong>GET /api/games/:id</strong> at ≤5 s while pipeline_state is <em>extracting</em> or <em>generating</em>. No Host SSE stream.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-8</div>
+        <div class="ad-title">Auth boundary: Authentik OIDC on Host routes; Guest routes open</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">All routes; FR-12; NFR-7</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Login screen in to-board; Guest route auth; API key leaking to frontend; inconsistent encryption</span></div>
+        </div>
+        <div class="ad-rule">
+          Every Host route: <strong>Depends(require_host)</strong> validates OIDC JWT against Authentik JWKS (cached on startup).<br><br>
+          Guest routes (<code>/api/room/:slug</code>, <code>/api/room/:slug/events</code>): no auth dependency. No Guest identity stored.<br><br>
+          API key: Fernet-encrypted in SQLite. Key from env var <strong>SECRET_KEY</strong>. Implemented once in <code>backend/core/crypto.py</code>. Inline crypto forbidden.
+        </div>
+      </div>
+
+      <div class="ad-card">
+        <div class="ad-id">AD-9</div>
+        <div class="ad-title">Rulebook cardinality: one active Rulebook per Game</div>
+        <div class="ad-meta">
+          <div class="ad-meta-item"><span class="k">Binds</span><span class="v">FR-2, FR-6 (upload + extraction)</span></div>
+          <div class="ad-meta-item"><span class="k">Prevents</span><span class="v">Generation worker picking wrong Rulebook row on re-upload</span></div>
+        </div>
+        <div class="ad-rule">
+          RULEBOOK has UNIQUE on <strong>game_id</strong> — one row per Game. On re-upload: upload service deletes old RULEBOOK row and its files (<em>pdf_path</em>, <em>extracted_text_path</em>) from <code>/data/uploads/</code> in the same DB transaction before inserting the new row.
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- DIAGRAMS -->
+  <section id="diagrams">
+    <h2>Diagrams</h2>
+
+    <h3>Content Pipeline State Machine</h3>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> no_rulebook
+    no_rulebook --> extracting : upload service fires transition
+    extracting --> ready_to_generate : worker complete
+    extracting --> no_rulebook : worker failed
+    ready_to_generate --> generating : Host triggers generation
+    generating --> draft : LLM returns content
+    generating --> ready_to_generate : LLM failed
+    draft --> published : Host publishes
+    draft --> rejected : Host rejects
+    rejected --> generating : Host triggers regeneration
+    published --> generating : Host triggers regeneration
+      </div>
+    </div>
+
+    <h3>Container Topology</h3>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+graph TB
+    subgraph host["TrueNAS SCALE host"]
+        subgraph compose["Docker Compose stack"]
+            web["web — nginx:1.27-alpine\nport 80"]
+            api["api — Python 3.12 + FastAPI\nport 8000 (internal)"]
+        end
+        db_vol["to-board-db dataset\n/data/db/"]
+        up_vol["to-board-uploads dataset\n/data/uploads/"]
+    end
+    guest["Guest browser (LAN)"] -->|"GET /room/:slug"| web
+    host_browser["Host browser (LAN)"] --> web
+    web -->|"/api/*"| api
+    api -->|bind mount| db_vol
+    api -->|bind mount| up_vol
+    api -.->|"HTTPS — generation only"| internet["Cloud LLM API"]
+    api -.->|"HTTPS — JWKS on startup"| authentik_ext["Authentik (LAN)"]
+      </div>
+    </div>
+
+    <h3>Core Entity Relationships</h3>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+erDiagram
+    GAME {
+        uuid id PK
+        text title
+        text cover_image_path
+        text room_slug_prefix
+        datetime created_at
+    }
+    RULEBOOK {
+        uuid id PK
+        uuid game_id FK
+        text pdf_path
+        text extracted_text_path
+        datetime uploaded_at
+    }
+    CONTENT {
+        uuid id PK
+        uuid game_id FK
+        text pipeline_state
+        text prior_pipeline_state
+        text draft_quickstart_md
+        text draft_cheat_sheet_md
+        text published_quickstart_md
+        text published_cheat_sheet_md
+        datetime generated_at
+        datetime published_at
+    }
+    SESSION {
+        uuid id PK
+        uuid game_id FK
+        text game_title_snapshot
+        text room_slug
+        datetime started_at
+        datetime ended_at
+        text players_json
+        text outcome
+    }
+    SETTINGS {
+        int id PK
+        text llm_provider
+        text api_key_encrypted
+    }
+    GAME ||--o| RULEBOOK : "one (UNIQUE game_id)"
+    GAME ||--o| CONTENT : "one (UNIQUE game_id)"
+    GAME ||--o{ SESSION : "many"
+      </div>
+    </div>
+  </section>
+
+  <!-- STACK -->
+  <section id="stack">
+    <h2>Stack</h2>
+    <p style="font-size:14px; color:var(--fg-muted); margin-bottom:20px;">Verified against live package registries on 2026-09-07. Seed — the code owns this once it exists.</p>
+    <div class="stack-pills">
+      <div class="stack-pill"><span class="sp-name">Python</span><span class="sp-ver">3.12</span></div>
+      <div class="stack-pill"><span class="sp-name">FastAPI</span><span class="sp-ver">0.141.1</span></div>
+      <div class="stack-pill"><span class="sp-name">Uvicorn</span><span class="sp-ver">0.52.4</span></div>
+      <div class="stack-pill"><span class="sp-name">SQLModel</span><span class="sp-ver">0.0.42</span></div>
+      <div class="stack-pill"><span class="sp-name">SQLite</span><span class="sp-ver">built-in</span></div>
+      <div class="stack-pill"><span class="sp-name">pdfplumber</span><span class="sp-ver">0.11.10</span></div>
+      <div class="stack-pill"><span class="sp-name">cryptography (Fernet)</span><span class="sp-ver">latest</span></div>
+      <div class="stack-pill"><span class="sp-name">Svelte</span><span class="sp-ver">5.57.0</span></div>
+      <div class="stack-pill"><span class="sp-name">Vite</span><span class="sp-ver">8.2.2</span></div>
+      <div class="stack-pill"><span class="sp-name">TypeScript</span><span class="sp-ver">compatible with Svelte 5.57.0</span></div>
+      <div class="stack-pill"><span class="sp-name">pdfjs-dist</span><span class="sp-ver">6.3.289</span></div>
+      <div class="stack-pill"><span class="sp-name">nginx</span><span class="sp-ver">1.27-alpine</span></div>
+      <div class="stack-pill"><span class="sp-name">Docker Compose</span><span class="sp-ver">v2</span></div>
+    </div>
+
+    <h3>Repository layout</h3>
+    <pre>to-board/
+  backend/
+    core/
+      config.py        <span class="comment"># env-var config (paths, OIDC issuer, LLM provider)</span>
+      crypto.py        <span class="comment"># Fernet encrypt_api_key() / decrypt_api_key() — only crypto impl</span>
+      utils.py         <span class="comment"># slugify() and other shared utilities</span>
+    routers/
+      games.py         <span class="comment"># /api/games — CRUD + pipeline triggers</span>
+      sessions.py      <span class="comment"># /api/sessions — CRUD + end-session</span>
+      room.py          <span class="comment"># /api/room/:slug — Guest content + SSE</span>
+      settings.py      <span class="comment"># /api/settings — API key management</span>
+    services/
+      content.py       <span class="comment"># pipeline state machine + generation orchestration</span>
+      extraction.py    <span class="comment"># PDF text extraction (pdfplumber, run_in_executor)</span>
+      llm.py           <span class="comment"># LLM API client (Anthropic / Google)</span>
+      auth.py          <span class="comment"># OIDC JWT verification (require_host dependency)</span>
+    models/
+      game.py          <span class="comment"># Game, Rulebook SQLModel tables</span>
+      content.py       <span class="comment"># Content table (pipeline_state, *_md columns)</span>
+      session.py       <span class="comment"># Session table</span>
+      settings.py      <span class="comment"># Settings table (encrypted API key)</span>
+    workers/           <span class="comment"># background task functions (via BackgroundTasks)</span>
+      extraction.py
+      generation.py
+    db/
+      engine.py        <span class="comment"># SQLite engine + session factory</span>
+      init.py          <span class="comment"># create_all on startup; stuck-job recovery</span>
+    main.py            <span class="comment"># FastAPI app, router includes, lifespan handler</span>
+    Dockerfile
+  frontend/
+    src/
+      lib/
+        api.ts          <span class="comment"># typed fetch wrappers for /api/*</span>
+        Markdown.svelte <span class="comment"># shared Markdown renderer (marked + sanitize)</span>
+      routes/           <span class="comment"># page components (Collection, GameDetail, etc.)</span>
+      components/       <span class="comment"># GameCard, StatusBadge, Sidebar, QRReveal, RoomPage…</span>
+    vite.config.ts
+    Dockerfile          <span class="comment"># builds static dist/; final image is nginx:1.27-alpine</span>
+  docker-compose.yml    <span class="comment"># two services: api, web; two bind mounts; no managed volumes</span>
+  .env.example</pre>
+  </section>
+
+  <!-- CONVENTIONS -->
+  <section id="conventions">
+    <h2>Consistency Conventions</h2>
+    <p style="font-size:14px; color:var(--fg-muted); margin-bottom:20px;">Defaults that bind where independent builders would drift.</p>
+    <div class="conv-grid">
+      <div class="conv-row"><span class="conv-key">File naming</span><span class="conv-val">backend: <code>snake_case.py</code> — frontend: <code>PascalCase.svelte</code> for components, <code>camelCase.ts</code> for utilities</span></div>
+      <div class="conv-row"><span class="conv-key">API routes</span><span class="conv-val">REST, JSON. Host: <code>/api/games</code>, <code>/api/sessions</code>, <code>/api/settings</code>. Guest: <code>/api/room/:slug</code>, <code>/api/room/:slug/events</code>. Verbs via HTTP method only.</span></div>
+      <div class="conv-row"><span class="conv-key">Domain nouns</span><span class="conv-val">Use PRD §4 Glossary terms verbatim in code: <code>Game</code>, <code>Rulebook</code>, <code>Content</code>, <code>PipelineState</code>, <code>Session</code>, <code>Room</code>. Never "project", "document", "user".</span></div>
+      <div class="conv-row"><span class="conv-key">IDs</span><span class="conv-val">UUID v4 for Game.id and Session.id. Room slug: <code>&lt;game-slug&gt;-&lt;4-char-base36&gt;</code> (e.g. <code>wingspan-3f2a</code>).</span></div>
+      <div class="conv-row"><span class="conv-key">room_slug_prefix</span><span class="conv-val">URL-safe slugification of Game.title — written at game INSERT, immutable. Session-creation appends <code>-&lt;4-char-base36&gt;</code>. Single implementation: <code>backend/core/utils.py:slugify()</code>.</span></div>
+      <div class="conv-row"><span class="conv-key">Timestamps</span><span class="conv-val">ISO 8601 UTC strings in API responses. SQLite stores as TEXT. Columns: <code>created_at</code>, <code>started_at</code>, <code>ended_at</code>, <code>generated_at</code>, <code>published_at</code>.</span></div>
+      <div class="conv-row"><span class="conv-key">Error shape</span><span class="conv-val"><code>{"detail": "..."}</code> — FastAPI default. HTTP 409 for invalid pipeline transitions; 422 for validation; 404 for missing resources.</span></div>
+      <div class="conv-row"><span class="conv-key">State mutation</span><span class="conv-val">Only <code>backend/services/</code> mutates <code>pipeline_state</code>. Routers call services; workers call services to write results. No direct DB writes from routers or workers.</span></div>
+      <div class="conv-row"><span class="conv-key">Config</span><span class="conv-val">All runtime config via environment variables. <code>backend/core/config.py</code> is the single config object. No hardcoded paths.</span></div>
+      <div class="conv-row"><span class="conv-key">Crypto</span><span class="conv-val">Fernet only. <code>backend/core/crypto.py</code> is the single implementation. Inline crypto forbidden everywhere else.</span></div>
+      <div class="conv-row"><span class="conv-key">No Guest data</span><span class="conv-val">No logging middleware recording request IPs. No analytics. Guest SSE connections tracked in-memory only (asyncio Queue, no client IP). No Guest data in SQLite.</span></div>
+      <div class="conv-row"><span class="conv-key">Markdown rendering</span><span class="conv-val">Single shared <code>&lt;Markdown&gt;</code> Svelte component for all content rendering. Sanitization applied before render.</span></div>
+    </div>
+  </section>
+
+  <!-- CAPABILITIES -->
+  <section id="capabilities">
+    <h2>Capability → Architecture Map</h2>
+    <table>
+      <thead>
+        <tr><th>FR / Area</th><th>Lives in</th><th>Governed by</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>FR-1 Create game</td><td><code>routers/games.py</code> → services → models/game.py</td><td>AD-2, AD-5, conventions</td></tr>
+        <tr><td>FR-2 Upload rulebook PDF</td><td><code>routers/games.py</code> + <code>workers/extraction.py</code></td><td>AD-3, AD-5, AD-6, AD-9</td></tr>
+        <tr><td>FR-3 PDF viewer (PDF.js)</td><td><code>frontend/src/routes/GameDetail</code> + pdfjs-dist</td><td>AD-1, pdfjs-dist 6.3.289</td></tr>
+        <tr><td>FR-4 Delete game</td><td><code>routers/games.py</code> → services</td><td>AD-2, AD-3 (delete file + row)</td></tr>
+        <tr><td>FR-5 Trigger generation</td><td><code>routers/games.py</code> → <code>services/content.py</code> → <code>workers/generation.py</code></td><td>AD-5, AD-6, AD-8</td></tr>
+        <tr><td>FR-6 PDF text extraction</td><td><code>workers/extraction.py</code> (run_in_executor)</td><td>AD-6, AD-3, AD-9</td></tr>
+        <tr><td>FR-7 Review Draft content</td><td><code>routers/games.py</code> → <code>services/content.py</code></td><td>AD-4, AD-5</td></tr>
+        <tr><td>FR-8 Serve Published content</td><td><code>routers/room.py</code> reads published_* columns</td><td>AD-4, AD-2; zero cloud calls at runtime</td></tr>
+        <tr><td>FR-9 Configure API key</td><td><code>routers/settings.py</code> → <code>models/settings.py</code></td><td>AD-8 (Fernet, never in response)</td></tr>
+        <tr><td>FR-10 Start session</td><td><code>routers/sessions.py</code> → services</td><td>AD-5, AD-2; room_slug generated here</td></tr>
+        <tr><td>FR-11 QR code generation</td><td><code>frontend/src/routes/QRReveal</code> (client-side QR lib)</td><td>AD-1</td></tr>
+        <tr><td>FR-12 Guest accesses Room</td><td><code>routers/room.py</code> (no auth dependency)</td><td>AD-8, NFR-7</td></tr>
+        <tr><td>FR-13 Room page display</td><td><code>frontend/src/routes/RoomPage</code></td><td>AD-1, AD-4</td></tr>
+        <tr><td>FR-14 Host ends session; Guest notified</td><td><code>routers/sessions.py</code> → SSE close event</td><td>AD-7</td></tr>
+        <tr><td>FR-15–18 Session log / durability</td><td><code>models/session.py</code>, to-board-db dataset</td><td>AD-2, AD-3</td></tr>
+        <tr><td>FR-19–20 Host preview / PDF viewer without session</td><td><code>routers/games.py</code> GET content + PDF viewer route</td><td>AD-8 (Host auth, no Session dependency)</td></tr>
+        <tr><td>NFR-4 Data durability</td><td>Named TrueNAS bind mounts</td><td>AD-3</td></tr>
+        <tr><td>NFR-5 Resource ceiling</td><td>Single Python process + nginx alpine; SQLite</td><td>AD-1, AD-6</td></tr>
+        <tr><td>NFR-7 Guest privacy</td><td>No auth on Guest routes; no Guest logging</td><td>AD-8, conventions</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- DEFERRED -->
+  <section id="deferred">
+    <h2>Deferred</h2>
+    <p style="font-size:14px; color:var(--fg-muted); margin-bottom:20px;">Decisions intentionally pushed down — each with the reason it can wait.</p>
+    <div class="deferred-list">
+      <div class="deferred-item"><strong>HTTPS / TLS termination</strong> — PRD A-11 defers this. Stack listens on HTTP port 80. Reverse-proxy TLS is a host-level concern outside the Compose file.</div>
+      <div class="deferred-item"><strong>LLM provider selection UI</strong> — FR-9 allows configurable provider; dropdown vs. env-var-only mechanism is an implementation detail for the Settings epic.</div>
+      <div class="deferred-item"><strong>Cover image storage path &amp; serving</strong> — <code>/data/uploads/covers/</code> is the natural location; whether nginx serves it directly or the API proxies it is deferred to the Game Collection epic.</div>
+      <div class="deferred-item"><strong>pdfjs-dist worker bundling</strong> — version 6.3.289 specified; exact Vite plugin config for copying the PDF.js worker is deferred to the PDF Viewer epic.</div>
+      <div class="deferred-item"><strong>Markdown sanitization library</strong> — <code>&lt;Markdown&gt;</code> component must sanitize LLM output; specific library (DOMPurify, marked built-in) deferred to Content Review epic.</div>
+      <div class="deferred-item"><strong>LLM prompt versioning</strong> — prompt content, token limits, and model selection (Claude Haiku vs. Gemini Flash) deferred to the Generation epic.</div>
+      <div class="deferred-item"><strong>Play Mode (v1.1)</strong> — deferred per UX spine; no Play Mode surfaces in v1.</div>
+      <div class="deferred-item"><strong>v1.1 features</strong> — content quality voting, Cheat Sheet deep-links, private phone view, session photos — all deferred per PRD §7.1.</div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#15141b',
+      primaryColor: '#29263c',
+      primaryTextColor: '#edecee',
+      primaryBorderColor: '#3d375e',
+      lineColor: '#6d6d6d',
+      secondaryColor: '#1e1c27',
+      tertiaryColor: '#1e1c27',
+      edgeLabelBackground: '#1e1c27',
+      clusterBkg: '#1e1c27',
+      titleColor: '#edecee',
+      nodeBorder: '#3d375e',
+      mainBkg: '#29263c',
+      fontFamily: 'DM Sans, system-ui, sans-serif',
+      fontSize: '13px'
+    }
+  });
+
+  // Scrollspy
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('nav a');
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(a => a.classList.remove('active'));
+        const active = document.querySelector(`nav a[href="#${e.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

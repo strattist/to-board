@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>to-board — Review Draft: Wingspan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:           #15141b;
+    --surface:      #1e1c27;
+    --surface-raised: #29263c;
+    --fg:           #edecee;
+    --fg-muted:     #6d6d6d;
+    --primary:      #a277ff;
+    --primary-dim:  #3d375e;
+    --error:        #ff6767;
+    --error-dim:    rgba(255,103,103,0.12);
+    --border:       #29263c;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 16px;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar (collapsed) ── */
+  .sidebar {
+    width: 60px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+    height: 100vh;
+  }
+
+  .sidebar-logo {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid var(--border);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 0;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .nav-icon {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    cursor: pointer;
+    color: var(--fg-muted);
+    transition: background 150ms, color 150ms;
+    position: relative;
+  }
+
+  .nav-icon:hover { background: var(--surface-raised); color: var(--fg); }
+  .nav-icon.active { background: var(--primary-dim); color: var(--primary); }
+
+  .nav-icon::after {
+    content: attr(data-label);
+    position: absolute;
+    left: calc(100% + 8px);
+    background: var(--surface-raised);
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 100ms;
+    border: 1px solid var(--border);
+  }
+  .nav-icon:hover::after { opacity: 1; }
+
+  .sidebar-footer {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .expand-btn {
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: background 150ms, color 150ms;
+  }
+  .expand-btn:hover { background: var(--surface-raised); color: var(--fg); }
+
+  /* ── Main ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top: breadcrumb + heading */
+  .main-top {
+    padding: 24px 32px 0;
+    flex-shrink: 0;
+  }
+
+  .breadcrumb {
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .breadcrumb span { color: var(--fg-muted); }
+  .breadcrumb a { color: var(--fg-muted); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--fg); }
+
+  .page-title {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 12px;
+  }
+
+  .meta-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .meta-text {
+    font-size: 14px;
+    color: var(--fg-muted);
+  }
+
+  .meta-divider {
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+  }
+
+  .badge-neutral {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+    background: transparent;
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Two-column content ── */
+  .review-columns {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .review-col {
+    overflow-y: auto;
+    padding: 24px 32px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .review-col + .review-col {
+    border-left: 1px solid var(--border);
+  }
+
+  .col-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+    margin-bottom: 20px;
+  }
+
+  .review-col h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 16px;
+    margin-top: 24px;
+    letter-spacing: -0.01em;
+  }
+
+  .review-col h2:first-of-type { margin-top: 0; }
+
+  .review-col p {
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--fg);
+    opacity: 0.9;
+    margin-bottom: 14px;
+  }
+
+  .review-col ul {
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .review-col ul li {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--fg);
+    opacity: 0.9;
+  }
+
+  .review-col ul li strong {
+    font-weight: 600;
+    opacity: 1;
+  }
+
+  .cheat-section {
+    margin-bottom: 24px;
+  }
+
+  .cheat-heading {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Action bar ── */
+  .action-bar {
+    flex-shrink: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .action-center {
+    font-size: 12px;
+    color: var(--fg-muted);
+    text-align: center;
+    flex: 1;
+  }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--error);
+    border: 1px solid rgba(255,103,103,0.3);
+    border-radius: 10px;
+    padding: 10px 24px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms;
+    white-space: nowrap;
+  }
+  .btn-danger:hover { background: var(--error-dim); }
+
+  .btn-primary {
+    background: var(--primary);
+    color: var(--bg);
+    border: none;
+    border-radius: 10px;
+    padding: 10px 28px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-primary:hover { background: #b899ff; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar (collapsed) -->
+<aside class="sidebar">
+  <div class="sidebar-logo">tb</div>
+  <nav class="sidebar-nav">
+    <div class="nav-icon active" data-label="Collection">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="10" rx="1"/><rect x="14" y="3" width="7" height="6" rx="1"/>
+        <rect x="14" y="13" width="7" height="8" rx="1"/><rect x="3" y="17" width="7" height="4" rx="1"/>
+      </svg>
+    </div>
+    <div class="nav-icon" data-label="Session Log">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+    </div>
+    <div class="nav-icon" data-label="Settings">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+      </svg>
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <button class="expand-btn" title="Expand sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
+  </div>
+</aside>
+
+<!-- Main -->
+<main class="main">
+  <div class="main-top">
+    <div class="breadcrumb">
+      <a href="#">Collection</a>
+      <span>›</span>
+      <a href="#">Wingspan</a>
+      <span>›</span>
+      <span style="color: var(--fg);">Review draft</span>
+    </div>
+    <h1 class="page-title">Review Draft Content</h1>
+    <div class="meta-bar">
+      <span class="meta-text">Draft — generated Sep 4, 2026</span>
+      <div class="meta-divider"></div>
+      <span class="badge-neutral">Not published</span>
+    </div>
+  </div>
+
+  <!-- Two-column review -->
+  <div class="review-columns">
+
+    <!-- Quick-start Guide -->
+    <div class="review-col">
+      <div class="col-label">Quick-start Guide</div>
+
+      <h2>Welcome to Wingspan</h2>
+      <p>In Wingspan, you are a bird enthusiast competing to discover and attract the most remarkable birds to your wildlife preserves. Each of the three habitats on your player mat — forest, grassland, and wetland — supports different bird types and actions.</p>
+      <p>Your goal is to score the most points across four rounds by collecting birds, laying eggs, gathering food, and activating powerful chain reactions in your engine.</p>
+
+      <h2>Core loop</h2>
+      <p>On your turn, choose one action: play a bird from your hand, gain food from the dice in the bird feeder, lay eggs on your birds, or draw bird cards. Each action also activates the "when activated" powers of birds already in that habitat, firing from right to left.</p>
+      <p>Birds cost food and sometimes eggs to play. The further right a bird sits in its habitat, the more eggs it costs — but the more birds you have in that row, the more powers fire when you activate it. Building dense rows is the heart of the engine.</p>
+
+      <h2>Rounds and end game</h2>
+      <p>The game lasts four rounds of 8, 7, 6, and 5 turns. At the end of each round, players move their action cubes up and fulfill end-of-round goals. After round four, score birds, eggs, food on birds, tucked cards, end-of-round goal tokens, and bonus cards.</p>
+    </div>
+
+    <!-- Cheat Sheet -->
+    <div class="review-col">
+      <div class="col-label">Cheat Sheet</div>
+
+      <div class="cheat-section">
+        <div class="cheat-heading">Actions</div>
+        <ul>
+          <li><strong>Play a bird</strong> — pay food cost + eggs for the column. Place bird card in habitat.</li>
+          <li><strong>Gain food</strong> — take dice from feeder. Re-roll all if empty. Caching powers fire.</li>
+          <li><strong>Lay eggs</strong> — place eggs on birds. Egg limit varies by bird (shown on card).</li>
+          <li><strong>Draw cards</strong> — draw from face-up row or blind from deck.</li>
+        </ul>
+      </div>
+
+      <div class="cheat-section">
+        <div class="cheat-heading">Egg costs by column</div>
+        <ul>
+          <li>Column 1 — 0 eggs</li>
+          <li>Column 2 — 1 egg</li>
+          <li>Column 3 — 1 egg</li>
+          <li>Column 4 — 2 eggs</li>
+          <li>Column 5 — 2 eggs</li>
+        </ul>
+      </div>
+
+      <div class="cheat-section">
+        <div class="cheat-heading">Food types</div>
+        <ul>
+          <li><strong>Worm</strong> — invertebrate</li>
+          <li><strong>Wheat</strong> — seed</li>
+          <li><strong>Mouse</strong> — rodent</li>
+          <li><strong>Fish</strong> — fish</li>
+          <li><strong>Cherry</strong> — fruit</li>
+          <li><strong>Wild</strong> (nectar in Oceania) — any food</li>
+        </ul>
+      </div>
+
+      <div class="cheat-section">
+        <div class="cheat-heading">Scoring</div>
+        <ul>
+          <li>1 pt per bird in your preserves</li>
+          <li>1 pt per egg on a bird</li>
+          <li>1 pt per food cached on a bird</li>
+          <li>1 pt per card tucked under a bird</li>
+          <li>End-of-round goal tokens (1 / 1 / 2 / 3 pts)</li>
+          <li>Points on bonus cards</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn-danger">Reject</button>
+    <span class="action-center">Publishing will make this content available to Guests in all future sessions.</span>
+    <button class="btn-primary">Publish</button>
+  </div>
+</main>
+
+</body>
+</html>

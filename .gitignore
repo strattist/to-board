@@ -1,0 +1,26 @@
+# Local editor / runtime artifacts
+.opencode/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.DS_Store
+.env
+.env.*
+_bmad/config.user.toml
+
+# Node / tooling
+node_modules/
+npm-debug.log*
+
+# Local generated files that should stay out of version control
+coverage/
+dist/
+*.sqlite3
+
+# BMad generated session artifacts
+_bmad-output/**/.memlog.md
+_bmad-output/**/.working/
