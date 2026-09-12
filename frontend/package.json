@@ -1,0 +1,24 @@
+{
+  "name": "to-board-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "dompurify": "3.2.6",
+    "marked": "16.2.0",
+    "pdfjs-dist": "6.3.289",
+    "qrcode": "1.5.4",
+    "svelte": "5.57.0"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6",
+    "svelte-check": "4.3.1",
+    "typescript": "5.9.2",
+    "vite": "8.2.2"
+  }
+}

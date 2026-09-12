@@ -1,0 +1,21 @@
+services:
+  api:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    environment:
+      DB_PATH: /data/db/to-board.db
+      UPLOADS_PATH: /data/uploads
+      SECRET_KEY: ${SECRET_KEY}
+      AUTHENTIK_ISSUER: ${AUTHENTIK_ISSUER:-}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+    volumes:
+      - type: bind
+        source: ${TO_BOARD_DB_DATASET:-/mnt/to-board-db}
+        target: /data/db
+      - type: bind
+        source: ${TO_BOARD_UPLOADS_DATASET:-/mnt/to-board-uploads}
+        target: /data/uploads
+  web:
+    build: { context: ., dockerfile: frontend/Dockerfile }
+    ports: ["80:80"]
+    depends_on: [api]
