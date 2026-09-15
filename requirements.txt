@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlmodel==0.0.42
+pydantic-settings==2.10.1
+cryptography==46.0.1
+httpx==0.28.1
+pdfplumber==0.11.10
+python-multipart==0.0.20
+PyJWT==2.10.1
+pytest==8.4.2
