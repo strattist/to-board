@@ -24,7 +24,9 @@ dist/
 # BMad generated session artifacts
 _bmad-output/**/.memlog.md
 _bmad-output/**/.working/
+_bmad-output/implementation-artifacts/
 
 # Test/runtime data
 tests/.data/
 .test-data/
+data/
