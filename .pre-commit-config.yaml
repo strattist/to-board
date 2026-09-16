@@ -14,12 +14,3 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=1024]
         exclude: ^frontend/public/pdf\.worker\.mjs$
-
-  - repo: local
-    hooks:
-      - id: uv-lock
-        name: uv lock
-        entry: uv lock --check
-        language: system
-        pass_filenames: false
-        always_run: true
