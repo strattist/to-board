@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - "**"
+      - main
   pull_request:
 
 permissions:
@@ -14,6 +14,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prek:
+    name: Pre-commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: latest-known
+
+      - name: Run prek
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        with:
+          prek-version: "0.5.3"
+
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
@@ -59,6 +76,9 @@ jobs:
 
       - name: Check types and Svelte components
         run: npm run check
+
+      - name: Run frontend interaction contracts
+        run: npm run test:contracts
 
       - name: Build frontend
         run: npm run build

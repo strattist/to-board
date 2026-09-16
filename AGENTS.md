@@ -5,6 +5,16 @@
 
 Self-hosted board game night companion app. Deployed as a Docker Compose stack on TrueNAS SCALE; serves the Host (Baptiste, single authenticated user) and Guests (unauthenticated, LAN-only) entirely from local storage. No cloud calls at runtime — only during AI content generation, which is Host-triggered only. Planning artifacts in `_bmad-output/planning-artifacts/`; stack decisions deferred to Architecture phase.
 
+## General rules
+
+- Read the existing code before changing it.
+- Prefer small, focused changes.
+- Do not modify unrelated files.
+- Do not introduce dependencies unless necessary.
+- Follow the existing project conventions.
+- Run relevant tests after making changes.
+- Explain failing tests rather than hiding or bypassing them.
+
 ## Policy
 
 - Never push directly to `main`; PRs only.
@@ -21,7 +31,34 @@ Self-hosted board game night companion app. Deployed as a Docker Compose stack o
 
 ## Running and verifying
 
-TODO: no commands yet — stack decisions deferred to Architecture phase. Verify and fill on first refresh after code exists.
+Install dependencies from the repository root:
+
+```bash
+python3 -m pip install -r requirements.txt
+npm --prefix frontend ci
+```
+
+Run the backend tests:
+
+```bash
+python3 -m pytest
+```
+
+Run the pre-commit hooks across the repository:
+
+```bash
+uvx prek==0.5.3 run --all-files
+```
+
+Run the frontend checks and build:
+
+```bash
+npm --prefix frontend run check
+npm --prefix frontend run test:contracts
+npm --prefix frontend run build
+```
+
+To verify the deployed stack locally, prepare `.env` and the bind-mounted data directories as described in `README.md`, then run `rtk docker compose up --build` and check `http://localhost/api/health`.
 
 ## Conventions that differ from defaults
 
@@ -30,4 +67,18 @@ TODO: no commands yet — stack decisions deferred to Architecture phase. Verify
 - PDF rendering: PDF.js. Never the browser's native PDF plugin — viewer controls must work consistently across browsers (FR-3).
 - Guest Room must render without horizontal scroll at 375px viewport (iPhone SE baseline — FR-13).
 
+## Git
+
+- Do not create commits unless explicitly asked.
+- Do not reset, rebase, or force-push unless explicitly asked.
+- Do not discard existing user changes.
+
+## Security
+
+- Never expose secrets, tokens, credentials, or private keys.
+- Do not modify authentication or authorization behavior without explaining the change.
+- Do not execute destructive commands without asking first.
+
 <!-- /bmad:context -->
+
+@RTK.md
