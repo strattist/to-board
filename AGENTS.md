@@ -31,3 +31,5 @@ TODO: no commands yet — stack decisions deferred to Architecture phase. Verify
 - Guest Room must render without horizontal scroll at 375px viewport (iPhone SE baseline — FR-13).
 
 <!-- /bmad:context -->
+
+@RTK.md
