@@ -44,6 +44,12 @@ Run the backend tests:
 python3 -m pytest
 ```
 
+Run the pre-commit hooks across the repository:
+
+```bash
+uvx prek==0.5.3 run --all-files
+```
+
 Run the frontend checks and build:
 
 ```bash

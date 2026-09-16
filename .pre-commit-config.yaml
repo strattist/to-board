@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      # Preserve formatting in generated, vendored, and BMad-managed trees.
+      - id: end-of-file-fixer
+        exclude: ^(?:\.agents/|_bmad/|_bmad-output/|\.gitignore$|frontend/public/pdf\.worker\.mjs$)
+      - id: trailing-whitespace
+        exclude: ^(?:\.agents/|_bmad/|_bmad-output/|\.gitignore$|frontend/public/pdf\.worker\.mjs$)
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+        exclude: ^frontend/public/pdf\.worker\.mjs$
+
+  - repo: local
+    hooks:
+      - id: uv-lock
+        name: uv lock
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        always_run: true
