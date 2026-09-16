@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:contracts": "node --experimental-strip-types tests/interaction-contracts.test.mjs"
   },
   "dependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.0",

@@ -1,6 +1,10 @@
 import asyncio
 import json
+import logging
+from collections import defaultdict
+from datetime import timezone
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -12,11 +16,13 @@ from backend.core.utils import uuid4_str
 from backend.db.engine import get_session
 from backend.models import Content, Game, Rulebook, PipelineState, AppSettings
 from backend.services.content import begin_extraction, begin_generation, get_or_create, publish, reject, reset_for_rulebook
-from backend.services.games import create_game, delete_game
+from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, validate_cover
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 
 router = APIRouter(prefix='/api/games', tags=['games'])
+logger = logging.getLogger(__name__)
+_cover_locks: defaultdict[str, Lock] = defaultdict(Lock)
 
 class GameCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
@@ -28,9 +34,23 @@ class GenerationRequest(BaseModel):
 def payload(session: Session, game: Game) -> dict:
     rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game.id)).first()
     content = get_or_create(session, game.id)
+    created_at = game.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    else:
+        created_at = created_at.astimezone(timezone.utc)
+    cover_url = None
+    if game.cover_image_path:
+        version = ''
+        try:
+            version = f'?v={Path(game.cover_image_path).stat().st_mtime_ns}'
+        except OSError:
+            pass
+        cover_url = f'/api/games/{game.id}/cover/file{version}'
     return {
         'id': game.id, 'title': game.title, 'cover_image_path': game.cover_image_path,
-        'room_slug_prefix': game.room_slug_prefix, 'created_at': game.created_at,
+        'cover_url': cover_url,
+        'room_slug_prefix': game.room_slug_prefix, 'created_at': created_at,
         'rulebook': {'id': rulebook.id, 'uploaded_at': rulebook.uploaded_at, 'has_extracted_text': bool(rulebook.extracted_text_path)} if rulebook else None,
         'pipeline_state': content.pipeline_state.value, 'error_message': content.error_message,
         'has_published_content': bool(content.published_quickstart_md and content.published_cheat_sheet_md),
@@ -44,6 +64,18 @@ def list_games(session: Session = Depends(get_session), _host=Depends(require_ho
 @router.post('', status_code=status.HTTP_201_CREATED)
 def add_game(body: GameCreate, session: Session = Depends(get_session), _host=Depends(require_host)):
     game = create_game(session, body.title)
+    return payload(session, game)
+
+@router.post('/with-cover', status_code=status.HTTP_201_CREATED)
+async def add_game_with_cover(
+    title: str = Form(...),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    _host=Depends(require_host),
+):
+    suffix = Path(file.filename).suffix.lower() if file.filename else ''
+    data = await file.read(MAX_COVER_BYTES + 1)
+    game = create_game_with_cover(session, title, data, suffix)
     return payload(session, game)
 
 @router.get('/{game_id}')
@@ -103,23 +135,61 @@ async def upload_rulebook(game_id: str, background_tasks: BackgroundTasks, file:
 async def upload_cover(game_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), _host=Depends(require_host)):
     game = session.get(Game, game_id)
     if not game: raise HTTPException(404, 'Game not found.')
-    if not file.filename or Path(file.filename).suffix.lower() not in {'.jpg', '.jpeg', '.png', '.webp'}:
+    suffix = Path(file.filename).suffix.lower() if file.filename else ''
+    if suffix not in COVER_EXTENSIONS:
         raise HTTPException(422, 'Cover image must be JPEG, PNG, or WebP.')
-    data = await file.read(10 * 1024 * 1024 + 1)
-    if len(data) > 10 * 1024 * 1024: raise HTTPException(422, 'Cover image must be no larger than 10 MB.')
-    target = get_settings().uploads_path / 'covers' / f'{game_id}{Path(file.filename).suffix.lower()}'
-    target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
-    if game.cover_image_path and game.cover_image_path != str(target):
-        try: Path(game.cover_image_path).unlink(missing_ok=True)
-        except OSError: pass
-    game.cover_image_path = str(target); session.add(game); session.commit(); session.refresh(game)
-    return payload(session, game)
+    data = await file.read(MAX_COVER_BYTES + 1)
+    try:
+        validate_cover(data, suffix)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    with _cover_locks[game_id]:
+        target = get_settings().uploads_path / 'covers' / f'{game_id}{suffix}'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f'.{target.name}.{uuid4_str()}.tmp')
+        backup = target.with_name(f'.{target.name}.{uuid4_str()}.bak')
+        old_path = game.cover_image_path
+        try:
+            temporary.write_bytes(data)
+            if target.exists():
+                target.replace(backup)
+            temporary.replace(target)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            if backup.exists() and not target.exists():
+                backup.replace(target)
+            else:
+                backup.unlink(missing_ok=True)
+            raise
+        game.cover_image_path = str(target)
+        session.add(game)
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            target.unlink(missing_ok=True)
+            if backup.exists():
+                backup.replace(target)
+            raise
+        try:
+            backup.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning('Unable to remove cover backup %s: %s', backup, exc)
+        if old_path and old_path != str(target):
+            try:
+                Path(old_path).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning('Unable to remove replaced cover %s: %s', old_path, exc)
+        return payload(session, game)
 
 @router.get('/{game_id}/cover/file')
 def cover_file(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
     game = session.get(Game, game_id)
     if not game or not game.cover_image_path: raise HTTPException(404, 'Cover image not found.')
-    return FileResponse(game.cover_image_path)
+    cover_path = Path(game.cover_image_path)
+    if not cover_path.is_file(): raise HTTPException(404, 'Cover image not found.')
+    return FileResponse(cover_path)
 
 @router.get('/{game_id}/rulebook')
 def rulebook_info(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
