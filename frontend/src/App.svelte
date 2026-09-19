@@ -13,10 +13,32 @@
   import QRReveal from './components/QRReveal.svelte';
   import { createGame as createGameRequest, createGameWithCover, getGames } from './lib/api';
   import { createGameFlow } from './lib/create-flow.js';
+  import { isPipelineBusy } from './lib/rulebook-flow.js';
   let path = window.location.pathname; let games:any[]=[]; let error=''; let loading=true; let collapsed=localStorage.getItem('sidebar-collapsed')==='true'; let mobileOpen=false;
-  const refresh = async()=>{loading=true;try{games=await getGames();error=''}catch(e){error=(e as Error).message}finally{loading=false}};
+  let refreshVersion = 0;
+  const refresh = async()=>{
+    const version = ++refreshVersion;
+    loading=true;
+    try {
+      const latest = await getGames();
+      if (version === refreshVersion) { games=latest; error=''; }
+    } catch(e) {
+      if (version === refreshVersion) error=(e as Error).message;
+    } finally {
+      if (version === refreshVersion) loading=false;
+    }
+  };
   function navigate(url:string){history.pushState({},'',url);path=url;mobileOpen=false;refresh()}
-  onMount(()=>{const handler=()=>{path=window.location.pathname;refresh()};window.addEventListener('popstate',handler);refresh();return()=>window.removeEventListener('popstate',handler)});
+  onMount(()=>{
+    const handler=()=>{path=window.location.pathname;void refresh()};
+    const pipelineTimer=window.setInterval(()=>{
+      const active=games.find((game)=>game.id===gameId);
+      if(active && isPipelineBusy(active.pipeline_state)) void refresh();
+    },5000);
+    window.addEventListener('popstate',handler);
+    void refresh();
+    return()=>{window.removeEventListener('popstate',handler);window.clearInterval(pipelineTimer)}
+  });
   function toggle(){collapsed=!collapsed;localStorage.setItem('sidebar-collapsed',String(collapsed))}
   async function createGame(title:string, cover:File|null){
     await createGameFlow(title, cover, {
