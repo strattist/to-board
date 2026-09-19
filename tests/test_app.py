@@ -276,6 +276,40 @@ def test_rulebook_upload_and_replacement_is_single_active_row():
             assert rows[0].pdf_path.endswith('.pdf')
 
 
+def test_rulebook_view_routes_validate_resources_and_serve_pdf(monkeypatch):
+    with TestClient(app) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Independent viewer'}).json()
+        info_url = f"/api/games/{game['id']}/rulebook"
+        file_url = f"{info_url}/file"
+        assert client.get(info_url).status_code == 404
+        assert client.get(file_url).status_code == 404
+        assert client.get('/api/games/not-a-game/rulebook').json()['detail'] == 'Game not found.'
+        assert client.get('/api/games/not-a-game/rulebook/file').status_code == 404
+
+        uploaded = client.post(info_url, files={'file': ('rules.pdf', PDF, 'application/pdf')})
+        assert uploaded.status_code == 200
+        served = client.get(file_url)
+        assert served.status_code == 200
+        assert served.headers['content-type'].startswith('application/pdf')
+        assert served.content == PDF
+
+        with Session(engine) as db:
+            rulebook = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            Path(rulebook.pdf_path).unlink()
+        assert client.get(info_url).json()['detail'] == 'Rulebook file not found.'
+        assert client.get(file_url).json()['detail'] == 'Rulebook file not found.'
+
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.get(info_url).status_code == 401
+            assert client.get(file_url).status_code == 401
+        finally:
+            settings.auth_disabled = previous
+
+
 def test_rulebook_validation_preserves_existing_file(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Validation game'}).json()
