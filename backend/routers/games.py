@@ -177,15 +177,28 @@ def cover_file(game_id: str, session: Session = Depends(get_session), _host=Depe
 
 @router.get('/{game_id}/rulebook')
 def rulebook_info(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
-    game = session.get(Game, game_id); rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
-    if not game or not rulebook: raise HTTPException(404, 'Rulebook not found.')
+    game = session.get(Game, game_id)
+    if not game:
+        raise HTTPException(404, 'Game not found.')
+    rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
+    if not rulebook:
+        raise HTTPException(404, 'Rulebook not found.')
+    if not Path(rulebook.pdf_path).is_file():
+        raise HTTPException(404, 'Rulebook file not found.')
     return {'game_id': game_id, 'pdf_path': rulebook.pdf_path, 'uploaded_at': rulebook.uploaded_at}
 
 @router.get('/{game_id}/rulebook/file')
 def rulebook_file(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
+    game = session.get(Game, game_id)
+    if not game:
+        raise HTTPException(404, 'Game not found.')
     rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
-    if not rulebook: raise HTTPException(404, 'Rulebook not found.')
-    return FileResponse(rulebook.pdf_path, media_type='application/pdf', filename=Path(rulebook.pdf_path).name)
+    if not rulebook:
+        raise HTTPException(404, 'Rulebook not found.')
+    pdf_path = Path(rulebook.pdf_path)
+    if not pdf_path.is_file():
+        raise HTTPException(404, 'Rulebook file not found.')
+    return FileResponse(pdf_path, media_type='application/pdf', filename=pdf_path.name)
 
 @router.post('/{game_id}/generate')
 def generate(game_id: str, body: GenerationRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session), _host=Depends(require_host)):
