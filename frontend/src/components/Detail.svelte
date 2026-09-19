@@ -1,28 +1,46 @@
 <script lang="ts">
   import StatusBadge from './StatusBadge.svelte';
+  import { uploadRulebook as uploadRulebookRequest } from '../lib/api';
+  import { confirmRulebookReplacement, isPipelineBusy } from '../lib/rulebook-flow.js';
 
   export let game: any;
   export let onNavigate: (path: string) => void = () => {};
-  export let onRefresh: () => void = () => {};
+  export let onRefresh: () => void | Promise<void> = () => {};
   let uploadError = '';
+  let uploadBusy = false;
+  let uploadStatus = '';
+
+  $: extractionBusy = !!game && isPipelineBusy(game.pipeline_state);
+  $: pipelineStatus = game?.pipeline_state === 'extracting'
+    ? 'Rulebook uploaded. Extracting text…'
+    : game?.pipeline_state === 'generating'
+      ? 'Content generation is in progress…'
+      : '';
 
   async function uploadRulebook(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    if (!confirmRulebookReplacement(!!game.rulebook, () => window.confirm('Replace the current Rulebook? This clears unpublished Draft content.'))) {
+      input.value = '';
+      return;
+    }
     uploadError = '';
-    const form = new FormData();
-    form.append('file', file);
+    uploadStatus = 'Uploading Rulebook…';
+    uploadBusy = true;
     try {
-      const response = await fetch(`/api/games/${game.id}/rulebook`, { method: 'POST', body: form, credentials: 'include' });
-      if (!response.ok) {
-        uploadError = (await response.json().catch(() => ({}))).detail || 'Rulebook upload failed.';
-        return;
+      await uploadRulebookRequest(game.id, file);
+      uploadStatus = 'Rulebook uploaded. Extraction is starting…';
+      try {
+        await onRefresh();
+      } catch {
+        uploadError = 'Rulebook uploaded, but the game state could not be refreshed.';
       }
-      onRefresh();
-    } catch {
-      uploadError = 'Rulebook upload failed. Check your connection and try again.';
+    } catch (error) {
+      uploadStatus = '';
+      uploadError = (error as Error).message || 'Rulebook upload failed. Check your connection and try again.';
     } finally {
+      uploadBusy = false;
       input.value = '';
     }
   }
@@ -64,7 +82,11 @@
         <a class="button" href={`/games/${game.id}/preview`}>Preview</a>
       </div>
     </div>
-    <p class="muted">{game.error_message || 'Manage the authoritative Rulebook and local Content.'}</p>
+    {#if game.error_message}
+      <p class="form-error" role="alert" aria-live="assertive">{game.error_message}</p>
+    {:else}
+      <p class="muted">Manage the authoritative Rulebook and local Content.</p>
+    {/if}
     {#if uploadError}<p class="form-error" role="alert">{uploadError}</p>{/if}
     <div class="panel">
       <h2>Cover</h2>
@@ -75,7 +97,9 @@
     <div class="panel">
       <h2>Rulebook</h2>
       <label for="game-rulebook-upload">Rulebook PDF</label>
-      <input id="game-rulebook-upload" type="file" accept=".pdf" on:change={uploadRulebook}/>
+      <input id="game-rulebook-upload" type="file" accept=".pdf,application/pdf" disabled={uploadBusy} on:change={uploadRulebook}/>
+      {#if uploadBusy}<p class="muted" role="status" aria-live="polite">{uploadStatus}</p>{/if}
+      {#if extractionBusy}<p class="muted" role="status" aria-live="polite" aria-busy="true">{pipelineStatus}</p>{/if}
       {#if game.rulebook}<a class="button" href={`/games/${game.id}/pdf`}>View rulebook</a>{/if}
     </div>
     <div class="panel">

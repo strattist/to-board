@@ -15,8 +15,9 @@ from backend.core.config import get_settings
 from backend.core.utils import uuid4_str
 from backend.db.engine import get_session
 from backend.models import Content, Game, Rulebook, PipelineState, AppSettings
-from backend.services.content import begin_extraction, begin_generation, get_or_create, publish, reject, reset_for_rulebook
+from backend.services.content import begin_generation, get_or_create, publish, reject
 from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, validate_cover
+from backend.services.rulebooks import replace_rulebook, validate_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 
@@ -109,25 +110,8 @@ async def upload_rulebook(game_id: str, background_tasks: BackgroundTasks, file:
     if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(422, 'Only PDF rulebooks are accepted.')
     content_bytes = await file.read(max_bytes + 1)
-    if len(content_bytes) > max_bytes or not content_bytes.startswith(b'%PDF'):
-        raise HTTPException(422, 'The rulebook must be a valid PDF no larger than 100 MB.')
-    game_dir = settings.uploads_path / 'rulebooks' / game_id
-    game_dir.mkdir(parents=True, exist_ok=True)
-    new_pdf = game_dir / f'{uuid4_str()}.pdf'
-    new_pdf.write_bytes(content_bytes)
-    old = session.exec(select(Rulebook).where(Rulebook.game_id == game_id)).first()
-    old_paths = [old.pdf_path, old.extracted_text_path] if old else []
-    if old: session.delete(old)
-    content_record = get_or_create(session, game_id)
-    reset_for_rulebook(session, content_record)
-    rulebook = Rulebook(id=uuid4_str(), game_id=game_id, pdf_path=str(new_pdf))
-    session.add(rulebook)
-    begin_extraction(session, game_id)
-    session.commit(); session.refresh(rulebook)
-    for old_path in old_paths:
-        if old_path:
-            try: Path(old_path).unlink(missing_ok=True)
-            except OSError: pass
+    validate_pdf(content_bytes, max_bytes)
+    rulebook = replace_rulebook(session, game, content_bytes, settings)
     background_tasks.add_task(run_extraction, game_id, rulebook.id)
     return payload(session, game)
 

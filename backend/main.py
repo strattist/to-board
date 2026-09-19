@@ -3,10 +3,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.db.init import initialize_database
 from backend.routers import games, room, sessions, settings
+from backend.core.config import get_settings
+from backend.services.rulebooks import retry_pending_cleanup
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_database()
+    retry_pending_cleanup(get_settings().uploads_path.resolve())
     yield
 
 initialize_database()

@@ -1,5 +1,6 @@
 import os
 import base64
+import json
 import shutil
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +21,7 @@ from backend.main import app
 from backend.db.engine import engine
 from backend.core.config import get_settings
 from backend.models import Content, Game, PipelineState, Rulebook
+from backend.services.extraction import extract_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 
@@ -169,6 +171,10 @@ def test_game_management_requires_host():
                 f"/api/games/{game['id']}/cover",
                 files={'file': ('cover.png', b'not an image', 'image/png')},
             ).status_code == 401
+            assert client.post(
+                f"/api/games/{game['id']}/rulebook",
+                files={'file': ('rules.pdf', PDF, 'application/pdf')},
+            ).status_code == 401
         finally:
             settings.auth_disabled = previous
 
@@ -268,6 +274,251 @@ def test_rulebook_upload_and_replacement_is_single_active_row():
             rows = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).all()
             assert len(rows) == 1
             assert rows[0].pdf_path.endswith('.pdf')
+
+
+def test_rulebook_validation_preserves_existing_file(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Validation game'}).json()
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        uploaded = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('rules.pdf', PDF, 'application/pdf')})
+        assert uploaded.status_code == 200
+        with Session(engine) as db:
+            existing = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).first()
+            old_path = Path(existing.pdf_path)
+        malformed = client.post(
+            f"/api/games/{game['id']}/rulebook",
+            files={'file': ('broken.pdf', b'%PDF-1.7\ntruncated', 'application/pdf')},
+        )
+        assert malformed.status_code == 422
+        settings = get_settings()
+        previous_limit = settings.max_upload_mb
+        settings.max_upload_mb = 1
+        try:
+            oversized = client.post(
+                f"/api/games/{game['id']}/rulebook",
+                files={'file': ('large.pdf', b'%PDF' + b'x' * (1024 * 1024), 'application/pdf')},
+            )
+        finally:
+            settings.max_upload_mb = previous_limit
+        assert oversized.status_code == 422
+        with Session(engine) as db:
+            current = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            assert current.pdf_path == str(old_path)
+        assert old_path.read_bytes() == PDF
+
+
+def test_rulebook_replacement_cleans_files_and_preserves_published_content(monkeypatch):
+    with TestClient(app) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Content preservation'}).json()
+        first = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('first.pdf', PDF, 'application/pdf')})
+        assert first.status_code == 200
+        with Session(engine) as db:
+            old = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            old_text = Path(old.pdf_path).with_suffix('.txt')
+            old_text.write_text('old extracted text', encoding='utf-8')
+            old.extracted_text_path = str(old_text)
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.draft
+            content.draft_quickstart_md = '# Old draft'
+            content.draft_cheat_sheet_md = '- Old draft rule'
+            content.published_quickstart_md = '# Published guide'
+            content.published_cheat_sheet_md = '- Published rule'
+            db.add(old)
+            db.add(content)
+            db.commit()
+            old_pdf = Path(old.pdf_path)
+        second = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('second.pdf', PDF, 'application/pdf')})
+        assert second.status_code == 200
+        with Session(engine) as db:
+            current = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert current.pdf_path != str(old_pdf)
+            assert content.pipeline_state == PipelineState.extracting
+            assert content.draft_quickstart_md is None
+            assert content.draft_cheat_sheet_md is None
+            assert content.published_quickstart_md == '# Published guide'
+            assert content.published_cheat_sheet_md == '- Published rule'
+            assert Path(current.pdf_path).is_absolute()
+        assert not old_pdf.exists()
+        assert not old_text.exists()
+
+
+def test_extraction_persists_absolute_text_path(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Extraction path'}).json()
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        uploaded = client.post(
+            f"/api/games/{game['id']}/rulebook",
+            files={'file': ('rules.pdf', PDF, 'application/pdf')},
+        )
+        rulebook_id = uploaded.json()['rulebook']['id']
+        run_extraction(game['id'], rulebook_id)
+        with Session(engine) as db:
+            rulebook = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert Path(rulebook.extracted_text_path).is_absolute()
+            assert Path(rulebook.extracted_text_path).is_file()
+            assert content.pipeline_state == PipelineState.ready_to_generate
+
+
+def test_rulebook_filesystem_failure_keeps_previous_state(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Rulebook rollback'}).json()
+        first = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('first.pdf', PDF, 'application/pdf')})
+        assert first.status_code == 200
+        with Session(engine) as db:
+            old_path = Path(db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one().pdf_path)
+        original_replace = Path.replace
+
+        def fail_staging(path: Path, destination: Path):
+            if path.name.endswith('.part'):
+                raise OSError('simulated staging failure')
+            return original_replace(path, destination)
+
+        monkeypatch.setattr(Path, 'replace', fail_staging)
+        failed = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('replacement.pdf', PDF, 'application/pdf')})
+        assert failed.status_code == 500
+        with Session(engine) as db:
+            current = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            assert current.pdf_path == str(old_path)
+        assert old_path.read_bytes() == PDF
+        assert not list(old_path.parent.glob('*.part'))
+
+
+def test_rulebook_cleanup_journal_retries_failed_old_file_cleanup(monkeypatch):
+    with TestClient(app) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Cleanup retry'}).json()
+        first = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('first.pdf', PDF, 'application/pdf')})
+        assert first.status_code == 200
+        with Session(engine) as db:
+            old_path = Path(db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one().pdf_path)
+        original_unlink = Path.unlink
+        attempts = 0
+
+        def fail_old_once(path: Path, *args, **kwargs):
+            nonlocal attempts
+            if path == old_path and attempts == 0:
+                attempts += 1
+                raise OSError('transient cleanup failure')
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'unlink', fail_old_once)
+        second = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('second.pdf', PDF, 'application/pdf')})
+        assert second.status_code == 200
+        assert attempts == 1
+        assert not old_path.exists()
+        assert not (old_path.parents[2] / '.rulebook-cleanup.json').exists()
+
+
+def test_rulebook_cleanup_journal_tracks_persistent_failure(monkeypatch):
+    with TestClient(app) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Cleanup journal'}).json()
+        first = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('first.pdf', PDF, 'application/pdf')})
+        assert first.status_code == 200
+        with Session(engine) as db:
+            old_path = Path(db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one().pdf_path)
+        original_unlink = Path.unlink
+
+        def fail_old(path: Path, *args, **kwargs):
+            if path == old_path:
+                raise OSError('persistent cleanup failure')
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'unlink', fail_old)
+        second = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('second.pdf', PDF, 'application/pdf')})
+        assert second.status_code == 200
+        journal = old_path.parents[2] / '.rulebook-cleanup.json'
+        assert old_path.exists()
+        assert str(old_path.relative_to(old_path.parents[2])) in json.loads(journal.read_text(encoding='utf-8'))
+        monkeypatch.setattr(Path, 'unlink', original_unlink)
+        third = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('third.pdf', PDF, 'application/pdf')})
+        assert third.status_code == 200
+        assert not old_path.exists()
+        assert not journal.exists()
+
+
+def test_extraction_publication_preserves_existing_output_on_rename_failure(tmp_path, monkeypatch):
+    pdf_path = tmp_path / 'rulebook.pdf'
+    output_path = tmp_path / 'rulebook.txt'
+    pdf_path.write_bytes(PDF)
+    output_path.write_text('previous extraction', encoding='utf-8')
+    original_replace = Path.replace
+
+    def fail_output_replace(path: Path, destination: Path):
+        if path.name.endswith('.part') and destination == output_path:
+            raise OSError('simulated output rename failure')
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, 'replace', fail_output_replace)
+    with pytest.raises(OSError):
+        extract_pdf(str(pdf_path), str(output_path))
+    assert output_path.read_text(encoding='utf-8') == 'previous extraction'
+    assert not list(tmp_path.glob('*.part'))
+
+
+def test_rulebook_database_failure_keeps_committed_file_consistent(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Database rollback'}).json()
+        first = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('first.pdf', PDF, 'application/pdf')})
+        assert first.status_code == 200
+        original_commit = Session.commit
+
+        def fail_commit(self):
+            raise RuntimeError('simulated database failure')
+
+        monkeypatch.setattr('backend.services.rulebooks.Session.commit', fail_commit)
+        failed = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('replacement.pdf', PDF, 'application/pdf')})
+        assert failed.status_code == 500
+        with Session(engine) as db:
+            current = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            assert Path(current.pdf_path).is_file()
+            assert len(list(Path(current.pdf_path).parent.glob('*.pdf'))) == 1
+        monkeypatch.setattr(Session, 'commit', original_commit)
+
+
+def test_rulebook_refresh_failure_does_not_delete_committed_file(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'Refresh failure'}).json()
+
+        def fail_refresh(self, _instance):
+            raise RuntimeError('simulated refresh failure')
+
+        monkeypatch.setattr('backend.services.rulebooks.Session.refresh', fail_refresh)
+        failed = client.post(f"/api/games/{game['id']}/rulebook", files={'file': ('rules.pdf', PDF, 'application/pdf')})
+        assert failed.status_code == 500
+        with Session(engine) as db:
+            current = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            assert Path(current.pdf_path).is_file()
+
+
+def test_extraction_failure_removes_partial_output(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Extraction failure'}).json()
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        uploaded = client.post(
+            f"/api/games/{game['id']}/rulebook",
+            files={'file': ('rules.pdf', PDF, 'application/pdf')},
+        )
+        rulebook_id = uploaded.json()['rulebook']['id']
+
+        def fail_extract(_pdf_path, output_path):
+            Path(output_path).write_text('partial', encoding='utf-8')
+            raise RuntimeError('simulated extraction failure')
+
+        monkeypatch.setattr('backend.workers.extraction.extract_pdf', fail_extract)
+        run_extraction(game['id'], rulebook_id)
+        with Session(engine) as db:
+            rulebook = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert rulebook.extracted_text_path is None
+            assert content.pipeline_state == PipelineState.no_rulebook
+            assert not Path(rulebook.pdf_path).with_suffix('.txt').exists()
 
 
 def test_generation_blocks_when_api_key_is_missing_after_extraction():

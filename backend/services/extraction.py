@@ -1,6 +1,14 @@
 import asyncio
+import os
 from pathlib import Path
+from uuid import uuid4
 from backend.core.config import get_settings
+
+def _remove_temporary(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 def extract_pdf(pdf_path: str, output_path: str) -> int:
     text = ''
@@ -11,8 +19,17 @@ def extract_pdf(pdf_path: str, output_path: str) -> int:
     except Exception:
         # Keep failures explicit to the worker; no fabricated extraction is marked ready.
         raise
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(output_path).write_text(text, encoding='utf-8')
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f'.{output.name}.{uuid4().hex}.part')
+    try:
+        with temporary.open('w', encoding='utf-8') as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(output)
+    finally:
+        _remove_temporary(temporary)
     return len(text.split())
 
 async def extract_pdf_async(pdf_path: str, output_path: str) -> int:
