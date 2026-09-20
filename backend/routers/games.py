@@ -133,7 +133,7 @@ async def upload_cover(game_id: str, file: UploadFile = File(...), session: Sess
         raise HTTPException(422, str(exc)) from exc
 
     with game_operation_lock(game_id):
-        target = get_settings().uploads_path / 'covers' / f'{game_id}{suffix}'
+        target = get_settings().uploads_path.resolve() / 'covers' / f'{game_id}{suffix}'
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f'.{target.name}.{uuid4_str()}.tmp')
         backup = target.with_name(f'.{target.name}.{uuid4_str()}.bak')

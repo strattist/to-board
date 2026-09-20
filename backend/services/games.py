@@ -86,7 +86,7 @@ def create_game_with_cover(session: Session, title: str, cover_data: bytes, suff
     game = Game(id=uuid4_str(), title=title, room_slug_prefix=slugify(title))
     session.add(game)
     get_or_create(session, game.id)
-    target = get_settings().uploads_path / 'covers' / f'{game.id}{suffix}'
+    target = get_settings().uploads_path.resolve() / 'covers' / f'{game.id}{suffix}'
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         target.write_bytes(cover_data)

@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import shutil
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -251,6 +252,7 @@ def test_game_deletion_removes_current_assets_and_preserves_session_history(monk
                 game_id=game['id'],
                 game_title_snapshot=game['title'],
                 room_slug=f"delete-safely-{uuid4().hex[:4]}",
+                ended_at=datetime.now(timezone.utc),
             )
             db.add_all([rulebook, content, history])
             db.commit()
