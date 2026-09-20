@@ -1,4 +1,5 @@
 # Local editor / runtime artifacts
+.agents/
 .opencode/
 .venv/
 venv/
