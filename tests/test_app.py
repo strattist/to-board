@@ -20,7 +20,8 @@ from sqlmodel import Session, delete, select
 from backend.main import app
 from backend.db.engine import engine
 from backend.core.config import get_settings
-from backend.models import Content, Game, PipelineState, Rulebook
+from backend.services import games as games_service
+from backend.models import Content, Game, GameSession, PipelineState, Rulebook
 from backend.services.extraction import extract_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
@@ -29,6 +30,7 @@ from backend.workers.generation import run_generation
 @pytest.fixture(autouse=True)
 def reset_test_data():
     with Session(engine) as db:
+        db.exec(delete(GameSession))
         db.exec(delete(Rulebook))
         db.exec(delete(Content))
         db.exec(delete(Game))
@@ -223,6 +225,298 @@ def test_session_room_and_close_state():
         assert client.get('/api/room/' + record['room_slug']).json()['quickstart_md'] == '# Start'
         assert client.post('/api/sessions/' + record['id'] + '/end').status_code == 200
         assert client.get('/api/room/' + record['room_slug']).json()['ended'] is True
+
+
+def test_game_deletion_removes_current_assets_and_preserves_session_history(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Delete safely'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        with Session(engine) as db:
+            rulebook_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.pdf'
+            rulebook_path.parent.mkdir(parents=True, exist_ok=True)
+            rulebook_path.write_bytes(b'%PDF-1.4 test')
+            rulebook = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path=str(rulebook_path))
+            extracted = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.txt'
+            extracted.write_text('extracted rules', encoding='utf-8')
+            rulebook.extracted_text_path = str(extracted)
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Quick start'
+            content.published_cheat_sheet_md = '- Cheat sheet'
+            history = GameSession(
+                id=str(uuid4()),
+                game_id=game['id'],
+                game_title_snapshot=game['title'],
+                room_slug=f"delete-safely-{uuid4().hex[:4]}",
+            )
+            db.add_all([rulebook, content, history])
+            db.commit()
+            cover_path = Path(cover['cover_image_path'])
+            history_id = history.id
+
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 204
+        assert not rulebook_path.exists()
+        assert not extracted.exists()
+        assert not cover_path.exists()
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is None
+            assert db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).first() is None
+            assert db.exec(select(Content).where(Content.game_id == game['id'])).first() is None
+            preserved = db.get(GameSession, history_id)
+            assert preserved is not None
+            assert preserved.game_title_snapshot == 'Delete safely'
+        preserved_response = client.get(f'/api/sessions/{history_id}')
+        assert preserved_response.status_code == 200
+        assert preserved_response.json()['game_title_snapshot'] == 'Delete safely'
+        assert all(item['id'] != game['id'] for item in client.get('/api/games').json())
+
+
+def test_game_deletion_rejects_active_session_before_mutation():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Active session'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Start'
+            content.published_cheat_sheet_md = '- Rule'
+            db.add(content)
+            db.commit()
+        started = client.post(f"/api/sessions?game_id={game['id']}")
+        assert started.status_code == 201
+        blocked = client.delete(f"/api/games/{game['id']}")
+        assert blocked.status_code == 409
+        assert client.get(f"/api/room/{started.json()['room_slug']}").status_code == 200
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+
+
+def test_game_deletion_storage_failure_restores_assets_and_rows(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete storage failure'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        original_replace = Path.replace
+
+        def fail_staging(path: Path, destination: Path):
+            if '.game-delete' in str(destination):
+                raise OSError('simulated staging failure')
+            return original_replace(path, destination)
+
+        monkeypatch.setattr(Path, 'replace', fail_staging)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert response.json()['detail']
+        assert cover_path.exists()
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+
+
+def test_game_deletion_partial_staging_failure_restores_all_assets(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete partial staging'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        with Session(engine) as db:
+            rulebook_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.pdf'
+            rulebook_path.parent.mkdir(parents=True, exist_ok=True)
+            rulebook_path.write_bytes(b'current rulebook')
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path=str(rulebook_path)))
+            db.commit()
+        original_replace = Path.replace
+        failed = False
+
+        def fail_cover_stage(path: Path, destination: Path):
+            nonlocal failed
+            if not failed and destination.name == cover_path.name and '.game-delete' in destination.parts:
+                failed = True
+                raise OSError('simulated partial staging failure')
+            return original_replace(path, destination)
+
+        monkeypatch.setattr(Path, 'replace', fail_cover_stage)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert failed
+        assert cover_path.exists()
+        assert rulebook_path.exists()
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+
+
+def test_game_deletion_post_commit_cleanup_is_journaled_and_retried(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete cleanup journal'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        original_remove = games_service._remove_path
+
+        def fail_tombstone_unlink(path: Path):
+            if '.game-delete' in path.parts:
+                return False
+            return original_remove(path)
+
+        monkeypatch.setattr(games_service, '_remove_path', fail_tombstone_unlink)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert not cover_path.exists()
+        uploads_root = DATA / 'uploads'
+        journal = uploads_root / '.game-delete-cleanup.json'
+        assert journal.is_file()
+        pending = json.loads(journal.read_text(encoding='utf-8'))
+        assert pending
+        tombstone = uploads_root / pending[0]
+        assert tombstone.is_file()
+
+        monkeypatch.setattr(games_service, '_remove_path', original_remove)
+        from backend.services.games import retry_pending_game_cleanup
+        retry_pending_game_cleanup(uploads_root.resolve())
+        assert not journal.exists()
+        assert not tombstone.exists()
+
+
+def test_game_deletion_rejects_persisted_path_outside_uploads(tmp_path):
+    outside = tmp_path / 'outside.pdf'
+    outside.write_bytes(b'keep this file')
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete outside path'}).json()
+        with Session(engine) as db:
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path=str(outside)))
+            db.commit()
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert outside.read_bytes() == b'keep this file'
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+
+
+def test_game_deletion_database_failure_restores_assets_and_rows(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete database failure'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        original_commit = Session.commit
+
+        def fail_commit(self):
+            raise RuntimeError('simulated database failure')
+
+        monkeypatch.setattr('backend.services.games.Session.commit', fail_commit)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert response.json()['detail']
+        assert cover_path.exists()
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+        monkeypatch.setattr(Session, 'commit', original_commit)
+
+
+def test_game_deletion_database_failure_restores_all_assets(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete all assets'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        with Session(engine) as db:
+            rulebook_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.pdf'
+            extracted_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.txt'
+            rulebook_path.parent.mkdir(parents=True, exist_ok=True)
+            rulebook_path.write_bytes(b'rules')
+            extracted_path.write_text('rules text', encoding='utf-8')
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path=str(rulebook_path), extracted_text_path=str(extracted_path)))
+            db.commit()
+        original_commit = Session.commit
+
+        def fail_commit(self):
+            raise RuntimeError('simulated database failure')
+
+        monkeypatch.setattr('backend.services.games.Session.commit', fail_commit)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        assert cover_path.exists()
+        assert rulebook_path.exists()
+        assert extracted_path.exists()
+        with Session(engine) as db:
+            assert db.get(Game, game['id']) is not None
+            assert db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).first() is not None
+        monkeypatch.setattr(Session, 'commit', original_commit)
+
+
+def test_game_deletion_recovery_journal_replays_failed_restore(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Delete recovery'}).json()
+        cover = client.post(
+            f"/api/games/{game['id']}/cover",
+            files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
+        ).json()
+        cover_path = Path(cover['cover_image_path'])
+        original_replace = Path.replace
+        original_commit = Session.commit
+
+        def fail_commit(self):
+            raise RuntimeError('simulated database failure')
+
+        def fail_restore(path: Path, destination: Path):
+            if destination == cover_path:
+                raise OSError('simulated restore failure')
+            return original_replace(path, destination)
+
+        monkeypatch.setattr('backend.services.games.Session.commit', fail_commit)
+        monkeypatch.setattr(Path, 'replace', fail_restore)
+        response = client.delete(f"/api/games/{game['id']}")
+        assert response.status_code == 500
+        recovery = DATA / 'uploads' / '.game-delete-recovery.json'
+        assert recovery.is_file()
+
+        monkeypatch.setattr(Path, 'replace', original_replace)
+        monkeypatch.setattr(Session, 'commit', original_commit)
+        games_service.retry_pending_game_cleanup((DATA / 'uploads').resolve())
+        assert not recovery.exists()
+        assert cover_path.exists()
+
+
+def test_game_cleanup_journal_is_replayed_during_startup():
+    uploads_root = DATA / 'uploads'
+    tombstone = uploads_root / '.game-delete' / 'startup-op' / 'covers' / 'startup.png'
+    tombstone.parent.mkdir(parents=True, exist_ok=True)
+    tombstone.write_bytes(b'pending cleanup')
+    (uploads_root / '.game-delete-cleanup.json').write_text(
+        json.dumps([str(tombstone.relative_to(uploads_root))]), encoding='utf-8'
+    )
+    with TestClient(app):
+        pass
+    assert not tombstone.exists()
+    assert not (uploads_root / '.game-delete-cleanup.json').exists()
+
+
+def test_game_deletion_requires_host_and_returns_not_found():
+    with TestClient(app) as client:
+        assert client.delete('/api/games/unknown-game').status_code == 404
+        game = client.post('/api/games', json={'title': 'Protected deletion'}).json()
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.delete(f"/api/games/{game['id']}").status_code == 401
+            with Session(engine) as db:
+                assert db.get(Game, game['id']) is not None
+        finally:
+            settings.auth_disabled = previous
 
 
 def test_missing_cover_file_returns_not_found():

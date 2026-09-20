@@ -1,13 +1,11 @@
 import asyncio
 import json
 import logging
-from collections import defaultdict
 from datetime import timezone
 from pathlib import Path
-from threading import Lock
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from backend.core.auth import require_host
@@ -16,15 +14,13 @@ from backend.core.utils import uuid4_str
 from backend.db.engine import get_session
 from backend.models import Content, Game, Rulebook, PipelineState, AppSettings
 from backend.services.content import begin_generation, get_or_create, publish, reject
-from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, validate_cover
+from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, game_deletion_pending, game_operation_lock, retry_pending_game_cleanup, validate_cover
 from backend.services.rulebooks import replace_rulebook, validate_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 
 router = APIRouter(prefix='/api/games', tags=['games'])
 logger = logging.getLogger(__name__)
-_cover_locks: defaultdict[str, Lock] = defaultdict(Lock)
-
 class GameCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 class GameUpdate(BaseModel):
@@ -99,7 +95,14 @@ def update_game(game_id: str, body: GameUpdate, session: Session = Depends(get_s
 @router.delete('/{game_id}', status_code=204)
 def remove_game(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
     game = session.get(Game, game_id)
-    if not game: raise HTTPException(404, 'Game not found.')
+    if not game:
+        uploads_root = get_settings().uploads_path.resolve()
+        if game_deletion_pending(uploads_root, game_id):
+            retry_pending_game_cleanup(uploads_root)
+            if game_deletion_pending(uploads_root, game_id):
+                raise HTTPException(500, 'Game deletion committed; storage cleanup requires reconciliation.')
+            return Response(status_code=204)
+        raise HTTPException(404, 'Game not found.')
     delete_game(session, game)
 
 @router.post('/{game_id}/rulebook')
@@ -111,7 +114,8 @@ async def upload_rulebook(game_id: str, background_tasks: BackgroundTasks, file:
         raise HTTPException(422, 'Only PDF rulebooks are accepted.')
     content_bytes = await file.read(max_bytes + 1)
     validate_pdf(content_bytes, max_bytes)
-    rulebook = replace_rulebook(session, game, content_bytes, settings)
+    with game_operation_lock(game_id):
+        rulebook = replace_rulebook(session, game, content_bytes, settings)
     background_tasks.add_task(run_extraction, game_id, rulebook.id)
     return payload(session, game)
 
@@ -128,7 +132,7 @@ async def upload_cover(game_id: str, file: UploadFile = File(...), session: Sess
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    with _cover_locks[game_id]:
+    with game_operation_lock(game_id):
         target = get_settings().uploads_path / 'covers' / f'{game_id}{suffix}'
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f'.{target.name}.{uuid4_str()}.tmp')

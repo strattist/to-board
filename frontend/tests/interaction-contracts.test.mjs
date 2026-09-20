@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { activateLinkOnSpace } from '../src/lib/keyboard.js';
 import { createGameFlow } from '../src/lib/create-flow.js';
-import { createGameWithCover, uploadRulebook } from '../src/lib/api.ts';
+import { createDeleteController } from '../src/lib/delete-flow.ts';
+import { createGameWithCover, deleteGame, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
+
+const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
+assert.match(detailSource, /role="dialog"/);
+assert.match(detailSource, /This action is irreversible/);
+assert.match(detailSource, /on:click={cancelDelete}/);
+assert.match(detailSource, /on:click={confirmDelete}/);
+assert.match(detailSource, /createDeleteController/);
+assert.match(detailSource, /modal button:focus-visible/);
+assert.match(detailSource, /event\.key !== 'Tab'/);
 
 let clicked = false;
 let prevented = false;
@@ -45,6 +56,49 @@ assert.equal(request.path, '/api/games/game-1/rulebook');
 assert.equal(request.options.method, 'POST');
 assert.equal(request.options.credentials, 'include');
 assert.equal(request.options.body.get('file').name, 'rules.pdf');
+
+globalThis.fetch = async (path, options) => {
+  request = { path, options };
+  return new Response(null, { status: 204 });
+};
+await deleteGame('game-1');
+assert.equal(request.path, '/api/games/game-1');
+assert.equal(request.options.method, 'DELETE');
+assert.equal(request.options.credentials, 'include');
+
+const deleteEvents = [];
+const deleteController = createDeleteController({
+  requestDelete: async (gameId) => deleteEvents.push(['request', gameId]),
+  onBusy: (busy) => deleteEvents.push(['busy', busy]),
+  onSuccess: () => deleteEvents.push(['success']),
+  onError: (error) => deleteEvents.push(['error', error]),
+});
+assert.equal(deleteController.cancel(), true);
+assert.deepEqual(deleteEvents, [['error', '']]);
+await deleteController.confirm('game-1');
+assert.deepEqual(deleteEvents, [
+  ['error', ''],
+  ['busy', true],
+  ['error', ''],
+  ['request', 'game-1'],
+  ['success'],
+  ['busy', false],
+]);
+
+const failedEvents = [];
+const failedController = createDeleteController({
+  requestDelete: async () => { throw new Error('cleanup pending'); },
+  onBusy: (busy) => failedEvents.push(['busy', busy]),
+  onSuccess: () => failedEvents.push(['success']),
+  onError: (error) => failedEvents.push(['error', error]),
+});
+await failedController.confirm('game-2');
+assert.deepEqual(failedEvents, [
+  ['busy', true],
+  ['error', ''],
+  ['error', 'cleanup pending'],
+  ['busy', false],
+]);
 
 assert.equal(confirmRulebookReplacement(false, () => { throw new Error('must not prompt'); }), true);
 assert.equal(confirmRulebookReplacement(true, () => false), false);

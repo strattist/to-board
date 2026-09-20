@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-20-2026 21:31
-last_updated: 09-20-2026 21:31
+last_updated: 09-20-2026 22:20
 project: to-board
 project_key: NOKEY
 tracking_system: file-system
@@ -39,7 +39,7 @@ development_status:
   1-1-create-and-browse-game-entries: done
   1-2-upload-and-replace-a-game-rulebook: done
   1-3-view-a-rulebook-independently: done
-  1-4-delete-a-game-safely: backlog
+  1-4-delete-a-game-safely: done
   1-5-implement-the-host-collection-and-game-detail-experience: backlog
   epic-1-retrospective: optional
 
