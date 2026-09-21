@@ -1,16 +1,22 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { deleteGame, uploadRulebook as uploadRulebookRequest } from '../lib/api';
+  import { deleteGame, generateContent, startSession, uploadGameCover, uploadRulebook as uploadRulebookRequest } from '../lib/api';
   import { createDeleteController } from '../lib/delete-flow';
   import { confirmRulebookReplacement, isPipelineBusy } from '../lib/rulebook-flow.js';
 
   export let game: any;
+  export let loading = false;
   export let onNavigate: (path: string) => void = () => {};
-  export let onRefresh: () => void | Promise<void> = () => {};
+  export let onRefresh: (throwOnError?: boolean) => boolean | void | Promise<boolean | void> = () => {};
   let uploadError = '';
   let uploadBusy = false;
   let uploadStatus = '';
+  let coverBusy = false;
+  let sessionBusy = false;
+  let generateBusy = false;
+  let actionError = '';
+  let actionStatus = '';
   let deleteDialogOpen = false;
   let deleteBusy = false;
   let deleteError = '';
@@ -29,11 +35,79 @@
   });
 
   $: extractionBusy = !!game && isPipelineBusy(game.pipeline_state);
+  $: hasExtractedText = !!game?.rulebook?.has_extracted_text;
+  $: hasPublishedContent = !!game?.has_published_content;
   $: pipelineStatus = game?.pipeline_state === 'extracting'
     ? 'Rulebook uploaded. Extracting text…'
     : game?.pipeline_state === 'generating'
       ? 'Content generation is in progress…'
       : '';
+  $: generationReason = uploadBusy
+    ? 'Finish Rulebook upload before generating Content.'
+    : !hasExtractedText
+    ? 'Complete Rulebook extraction before generating Content.'
+    : extractionBusy
+      ? 'Content generation is unavailable while the pipeline is busy.'
+      : '';
+  $: contentActionReason = !hasPublishedContent
+    ? 'Published Content is required before starting a session or opening Preview.'
+    : extractionBusy
+      ? 'Preview and sessions are unavailable while the pipeline is busy.'
+      : '';
+
+  function errorMessage(error: unknown, fallback: string) {
+    return error instanceof Error && error.message ? error.message : fallback;
+  }
+
+  async function refreshAfterAction(successMessage: string) {
+    actionStatus = '';
+    try {
+      const refreshed = await onRefresh(true);
+      if (refreshed === false) throw new Error('The game state could not be refreshed.');
+      actionStatus = successMessage;
+    } catch (error) {
+      actionError = errorMessage(error, 'The game state could not be refreshed.');
+    }
+  }
+
+  async function startGameSession() {
+    if (!hasPublishedContent || extractionBusy || sessionBusy) return;
+    actionError = '';
+    actionStatus = '';
+    sessionBusy = true;
+    try {
+      const session = await startSession(game.id);
+      if (!session?.id) throw new Error('Session could not be started because the server returned an invalid response.');
+      onNavigate(`/session/${session.id}`);
+    } catch (error) {
+      actionError = errorMessage(error, 'Session could not be started. Check the game state and try again.');
+    } finally {
+      sessionBusy = false;
+    }
+  }
+
+  async function openPreview() {
+    if (!hasPublishedContent || extractionBusy) return;
+    actionError = '';
+    actionStatus = '';
+    onNavigate(`/games/${game.id}/preview`);
+  }
+
+  async function generate() {
+    if (!hasExtractedText || extractionBusy || uploadBusy || generateBusy) return;
+    if (!window.confirm('Generate content using the configured cloud provider?')) return;
+    actionError = '';
+    actionStatus = '';
+    generateBusy = true;
+    try {
+      await generateContent(game.id);
+      await refreshAfterAction('Content generation started.');
+    } catch (error) {
+      actionError = errorMessage(error, 'Content generation could not be started.');
+    } finally {
+      generateBusy = false;
+    }
+  }
 
   async function uploadRulebook(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -44,19 +118,17 @@
       return;
     }
     uploadError = '';
+    actionError = '';
+    actionStatus = '';
     uploadStatus = 'Uploading Rulebook…';
     uploadBusy = true;
     try {
       await uploadRulebookRequest(game.id, file);
       uploadStatus = 'Rulebook uploaded. Extraction is starting…';
-      try {
-        await onRefresh();
-      } catch {
-        uploadError = 'Rulebook uploaded, but the game state could not be refreshed.';
-      }
+      await refreshAfterAction('Rulebook uploaded. Extraction is starting.');
     } catch (error) {
       uploadStatus = '';
-      uploadError = (error as Error).message || 'Rulebook upload failed. Check your connection and try again.';
+      uploadError = errorMessage(error, 'Rulebook upload failed. Check your connection and try again.');
     } finally {
       uploadBusy = false;
       input.value = '';
@@ -68,23 +140,21 @@
     const file = input.files?.[0];
     if (!file) return;
     uploadError = '';
+    actionError = '';
+    actionStatus = '';
     if (file.size > 10 * 1024 * 1024) {
       uploadError = 'Cover image must be no larger than 10 MB.';
       input.value = '';
       return;
     }
-    const form = new FormData();
-    form.append('file', file);
+    coverBusy = true;
     try {
-      const response = await fetch(`/api/games/${game.id}/cover`, { method: 'POST', body: form, credentials: 'include' });
-      if (!response.ok) {
-        uploadError = (await response.json().catch(() => ({}))).detail || 'Cover upload failed.';
-        return;
-      }
-      onRefresh();
-    } catch {
-      uploadError = 'Cover upload failed. Check your connection and try again.';
+      await uploadGameCover(game.id, file);
+      await refreshAfterAction('Cover image uploaded.');
+    } catch (error) {
+      uploadError = errorMessage(error, 'Cover upload failed. Check your connection and try again.');
     } finally {
+      coverBusy = false;
       input.value = '';
     }
   }
@@ -96,70 +166,52 @@
     deleteDialog?.focus();
   }
 
-  function restoreDeleteTriggerFocus() {
-    void tick().then(() => deleteTrigger?.focus());
-  }
-
+  function restoreDeleteTriggerFocus() { void tick().then(() => deleteTrigger?.focus()); }
   function cancelDelete() {
     if (deleteBusy) return;
     deleteController.cancel();
     deleteDialogOpen = false;
     restoreDeleteTriggerFocus();
   }
-
   async function confirmDelete() {
     const deleted = await deleteController.confirm(game.id);
-    if (!deleted) {
-      await tick();
-      deleteDialog?.focus();
-    }
+    if (!deleted) { await tick(); deleteDialog?.focus(); }
   }
-
   function handleDeleteKeydown(event: KeyboardEvent) {
     if (!deleteDialogOpen) return;
-    if (event.key === 'Escape' && !deleteBusy) {
-      event.preventDefault();
-      cancelDelete();
-      return;
-    }
+    if (event.key === 'Escape' && !deleteBusy) { event.preventDefault(); cancelDelete(); return; }
     if (event.key !== 'Tab') return;
     const focusable = [deleteCancelButton, deleteConfirmButton].filter(Boolean);
     const current = document.activeElement;
     if (focusable.length === 0 || !deleteDialog) return;
-    if (event.shiftKey && (current === focusable[0] || current === deleteDialog)) {
-      event.preventDefault();
-      focusable[focusable.length - 1].focus();
-    } else if (!event.shiftKey && (current === focusable[focusable.length - 1] || current === deleteDialog)) {
-      event.preventDefault();
-      focusable[0].focus();
-    }
+    if (event.shiftKey && (current === focusable[0] || current === deleteDialog)) { event.preventDefault(); focusable[focusable.length - 1].focus(); }
+    else if (!event.shiftKey && (current === focusable[focusable.length - 1] || current === deleteDialog)) { event.preventDefault(); focusable[0].focus(); }
   }
 </script>
 
 <svelte:window on:keydown={handleDeleteKeydown}/>
 
 {#if game}
-  <section class="page">
+  <section class="page" aria-labelledby="game-title">
     <a href="/" on:click|preventDefault={() => onNavigate('/')}>← Collection</a>
     <div class="head">
-      <div><h1>{game.title}</h1><StatusBadge state={game.pipeline_state}/></div>
+      <div><h1 id="game-title">{game.title}</h1><StatusBadge state={game.pipeline_state}/></div>
       <div class="actions">
-        <button class="primary" disabled={!game.has_published_content} on:click={async () => { const response = await fetch(`/api/sessions?game_id=${game.id}`, { method: 'POST', credentials: 'include' }); const session = await response.json(); onNavigate(`/session/${session.id}`); }}>Start session</button>
-        <a class="button" href={`/games/${game.id}/preview`}>Preview</a>
+        <button class="primary" disabled={!hasPublishedContent || extractionBusy || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
+        <button class="button" disabled={!hasPublishedContent || extractionBusy} on:click={openPreview}>Preview</button>
       </div>
     </div>
-    {#if game.error_message}
-      <p class="form-error" role="alert" aria-live="assertive">{game.error_message}</p>
-    {:else}
-      <p class="muted">Manage the authoritative Rulebook and local Content.</p>
-    {/if}
+    {#if contentActionReason}<p class="action-note">{contentActionReason}</p>{/if}
+    {#if game.error_message}<p class="form-error" role="alert" aria-live="assertive">{game.error_message}</p>{:else}<p class="muted">Manage the authoritative Rulebook and local Content.</p>{/if}
+    {#if actionError}<p class="form-error" role="alert" aria-live="assertive">{actionError}</p>{/if}
     {#if uploadError}<p class="form-error" role="alert">{uploadError}</p>{/if}
     {#if deleteError}<p class="form-error" role="alert">{deleteError}</p>{/if}
+    {#if actionStatus}<p class="action-status" role="status" aria-live="polite">{actionStatus}</p>{/if}
     <div class="panel">
       <h2>Cover</h2>
       <label for="game-cover-upload">Cover image</label>
-      <input id="game-cover-upload" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" on:change={uploadCover}/>
-      {#if game.cover_url}<span class="muted">Cover uploaded</span>{/if}
+      <input id="game-cover-upload" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" disabled={coverBusy} on:change={uploadCover}/>
+      {#if coverBusy}<span class="muted" role="status">Uploading cover…</span>{:else if game.cover_url}<span class="muted">Cover uploaded</span>{/if}
     </div>
     <div class="panel">
       <h2>Rulebook</h2>
@@ -167,15 +219,18 @@
       <input id="game-rulebook-upload" type="file" accept=".pdf,application/pdf" disabled={uploadBusy} on:change={uploadRulebook}/>
       {#if uploadBusy}<p class="muted" role="status" aria-live="polite">{uploadStatus}</p>{/if}
       {#if extractionBusy}<p class="muted" role="status" aria-live="polite" aria-busy="true">{pipelineStatus}</p>{/if}
-      {#if game.rulebook}<a class="button" href={`/games/${game.id}/pdf`}>View rulebook</a>{/if}
+      {#if game.rulebook}<a class="button" href={`/games/${game.id}/pdf`}>View rulebook</a>{:else}<p class="action-note">Upload a Rulebook PDF to view it here.</p>{/if}
     </div>
     <div class="panel">
       <h2>Content</h2>
       {#if game.has_draft_content}<a class="button" href={`/games/${game.id}/review`}>Review draft</a>{/if}
-      <button class="primary" disabled={!game.rulebook?.has_extracted_text} on:click={async () => { if (!confirm('Generate content using the configured cloud provider?')) return; await fetch(`/api/games/${game.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"confirm":true}', credentials: 'include' }); onRefresh(); }}>Generate content</button>
+      <button class="primary" disabled={!hasExtractedText || extractionBusy || uploadBusy || generateBusy} aria-busy={generateBusy} on:click={generate}>{generateBusy ? 'Starting…' : 'Generate content'}</button>
+      {#if generationReason}<p class="action-note">{generationReason}</p>{/if}
     </div>
     <button bind:this={deleteTrigger} class="danger" on:click={openDeleteDialog}>Delete game</button>
   </section>
+{:else if loading}
+  <section class="page"><p role="status" aria-live="polite">Loading game…</p></section>
 {:else}
   <section class="page"><p>Game not found.</p></section>
 {/if}
@@ -186,14 +241,11 @@
       <h2 id="delete-game-title">Delete {game.title}?</h2>
       <p id="delete-game-description">This permanently removes the Game, its Rulebook, Content, and current files. Historical Sessions are preserved. This action is irreversible.</p>
       {#if deleteError}<p class="form-error" role="alert">{deleteError}</p>{/if}
-      <div class="modal-actions">
-        <button bind:this={deleteCancelButton} class="ghost" disabled={deleteBusy} on:click={cancelDelete}>Cancel</button>
-        <button bind:this={deleteConfirmButton} class="danger confirm" disabled={deleteBusy} aria-busy={deleteBusy} on:click={confirmDelete}>{deleteBusy ? 'Deleting…' : 'Delete game'}</button>
-      </div>
+      <div class="modal-actions"><button bind:this={deleteCancelButton} class="ghost" disabled={deleteBusy} on:click={cancelDelete}>Cancel</button><button bind:this={deleteConfirmButton} class="danger confirm" disabled={deleteBusy} aria-busy={deleteBusy} on:click={confirmDelete}>{deleteBusy ? 'Deleting…' : 'Delete game'}</button></div>
     </div>
   </div>
 {/if}
 
 <style>
-  .page{max-width:1000px;margin:auto;padding:32px}.head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin:24px 0}.head h1{font-size:32px;margin:0 0 10px}.actions{display:flex;gap:8px;flex-wrap:wrap}.panel{background:#1e1c27;border:1px solid #29263c;border-radius:16px;padding:20px;margin:20px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.panel input[type=file]{min-height:44px}.panel label{min-height:44px;display:flex;align-items:center}.primary,.button,.danger,.ghost{min-height:44px;padding:10px 20px;border-radius:10px;text-decoration:none;cursor:pointer}.primary{background:#a277ff;color:#15141b;border:0}.primary:disabled,.danger:disabled,.ghost:disabled{opacity:.45;cursor:not-allowed}.button{border:1px solid #29263c}.danger{background:transparent;color:#ff6767;border:1px solid #ff676755}.ghost{background:transparent;color:#edecee;border:1px solid #29263c}.muted{color:#6d6d6d}.form-error{color:#ff6767}.modal-backdrop{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px;z-index:10}.modal{max-width:520px;width:100%;background:#1e1c27;border:1px solid #453b62;border-radius:16px;padding:24px;box-shadow:0 18px 50px #0008}.modal h2{margin:0 0 12px}.modal p{line-height:1.5}.modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}.modal button:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.confirm{background:#ff6767;color:#15141b;border-color:#ff6767}@media(max-width:767px){.page{padding:32px}.head{flex-direction:column;align-items:flex-start}.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
+  .page{max-width:1000px;margin:auto;padding:32px}.head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin:24px 0}.head h1{font-size:32px;margin:0 0 10px}.actions{display:flex;gap:8px;flex-wrap:wrap}.panel{background:#1e1c27;border:1px solid #29263c;border-radius:16px;padding:20px;margin:20px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.panel input[type=file]{min-height:44px}.panel label{min-height:44px;display:flex;align-items:center}.primary,.button,.danger,.ghost{min-height:44px;padding:10px 20px;border-radius:10px;text-decoration:none;cursor:pointer}.primary{background:#a277ff;color:#15141b;border:0}.button{background:transparent;border:1px solid #29263c;color:#edecee}.primary:disabled,.button:disabled,.danger:disabled,.ghost:disabled{opacity:.45;cursor:not-allowed}.danger{background:transparent;color:#ff6767;border:1px solid #ff676755}.ghost{background:transparent;color:#edecee;border:1px solid #29263c}.primary:focus-visible,.button:focus-visible,.danger:focus-visible,.ghost:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.muted{color:#6d6d6d}.action-note{color:#b7b4c1;margin:0}.action-status{color:#61ffca}.form-error{color:#ff6767}.modal-backdrop{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px;z-index:30}.modal{max-width:520px;width:100%;background:#1e1c27;border:1px solid #453b62;border-radius:16px;padding:24px;box-shadow:0 18px 50px #0008}.modal h2{margin:0 0 12px}.modal p{line-height:1.5}.modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}.modal button:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.confirm{background:#ff6767;color:#15141b;border-color:#ff6767}@media(max-width:767px){.page{padding:32px}.head{flex-direction:column;align-items:flex-start}.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
 </style>
