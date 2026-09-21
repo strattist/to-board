@@ -50,3 +50,24 @@
 - source_spec: `spec-1-2-upload-and-replace-a-game-rulebook.md`
   summary: Make extraction cleanup and database-session recovery durable across persistent failures.
   evidence: Extraction temporary/output cleanup and worker exception recovery remain best-effort; a broader recovery policy is outside this story's replacement transaction.
+
+## Deferred from: spec-1-5-implement-the-host-collection-and-game-detail-experience (2026-09-21)
+
+- source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
+  summary: Disable Start session when the Game already has an active Session.
+  evidence: The current Game DTO does not expose active-session state; adding that signal or a new query requires a backend/API contract decision outside this frontend story.
+- source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
+  summary: Add an explicit warning before regeneration clears an existing Draft Content.
+  evidence: Draft replacement semantics belong to the Content-generation workflow; the approved Story 1.5 intent only requires state-aware availability and calm errors.
+- source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
+  summary: Add rendered component tests for Svelte navigation, Collection/Card states, Detail actions, and Preview branches.
+  evidence: Current dependency-free contracts verify source seams and API requests; a DOM test harness would require a separate test-stack decision and dependency scope.
+
+## Deferred from: code review of spec-1-5-implement-the-host-collection-and-game-detail-experience (2026-09-21)
+
+- source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
+  summary: Create flow can report a persisted game as failed when the follow-up refresh fails.
+  evidence: `frontend/src/lib/create-flow.js:6-9` performs creation and refresh sequentially; this behavior predates the reviewed change.
+- source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
+  summary: localStorage access is not guarded in restricted browsers.
+  evidence: `frontend/src/App.svelte:40-51` reads and writes localStorage without a guard; this behavior predates the reviewed change.
