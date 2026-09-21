@@ -8,6 +8,8 @@ services:
       AUTHENTIK_ISSUER: ${AUTHENTIK_ISSUER:-}
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      GOOGLE_MODEL: ${GOOGLE_MODEL:-gemini-2.0-flash}
     volumes:
       - type: bind
         source: ${TO_BOARD_DB_DATASET:-/mnt/to-board-db}

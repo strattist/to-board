@@ -41,6 +41,38 @@ openssl rand -hex 32
 
 Set the output as `SECRET_KEY` in `.env`. `AUTH_DISABLED=true` is for local development only. In a deployed instance, set it to `false` and configure `AUTHENTIK_ISSUER`.
 
+### Provider model overrides
+
+The API uses `ANTHROPIC_MODEL` and `GOOGLE_MODEL` at runtime. The defaults are
+`claude-haiku-4-5-20251001` and `gemini-2.0-flash`; set either variable in the
+host `.env` to change the model, then recreate the API container:
+
+```dotenv
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+GOOGLE_MODEL=gemini-2.0-flash
+```
+
+Model IDs are provider configuration, not application data. Use the provider's
+official model catalog or console to choose an ID; do not put API keys in model
+URLs, `.env` examples, logs, or frontend code. Anthropic's current lifecycle
+and replacement guidance is available in its [model deprecations
+documentation](https://docs.anthropic.com/en/docs/about-claude/model-deprecations).
+
+To list the Anthropic model IDs enabled for your key, keep the key in an
+environment variable and call the Models API:
+
+```bash
+export ANTHROPIC_API_KEY='your-key'
+curl -fsS https://api.anthropic.com/v1/models \
+  -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+  -H 'anthropic-version: 2023-06-01' \
+  | jq -r '.data[] | [.id, .display_name] | @tsv'
+```
+
+Do not paste the key into shell history, logs, or support requests. Anthropic
+documents that `GET /v1/models` returns the models available to the API key in
+its [List Models reference](https://docs.anthropic.com/en/api/models-list).
+
 ### 3. Build and start the server
 
 From the repository root:

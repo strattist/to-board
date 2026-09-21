@@ -560,6 +560,34 @@ So that I can verify the Guest-facing reference without starting a Session.
 **Then** the request is rejected or redirected through Authentik  
 **And** Guest access is available only through an active Session Room route.
 
+### Story 2.6: Add OpenAI as a Supported Provider
+
+As the Host,
+I want to use an OpenAI API key for Content generation,
+So that I can choose OpenAI alongside the existing supported providers.
+
+**Acceptance Criteria:**
+
+**Given** I am authenticated on Settings
+**When** I select OpenAI and submit a non-empty API key
+**Then** the key is encrypted with the existing Fernet implementation before it is stored
+**And** Settings returns only the provider and configured state.
+
+**Given** OpenAI is selected and a Game has extracted Rulebook text
+**When** Content generation runs
+**Then** only the extracted text is sent to OpenAI through the server-side adapter
+**And** the returned Quick-start Guide and Cheat Sheet enter the existing Draft path.
+
+**Given** OpenAI rejects the key, is unavailable, or returns malformed content
+**When** generation fails
+**Then** the Host sees a clear sanitized OpenAI-specific error
+**And** existing Published Content remains available.
+
+**Given** I switch between supported providers
+**When** the update succeeds
+**Then** existing Draft, Rejected, and Published Content remains unchanged
+**And** future generation uses the selected provider.
+
 ## Epic 3: Run a Game Night with Guest Rooms
 
 The Host can start a Session for a ready Game, display a scannable QR Room, and end the Session. Guests can anonymously access a mobile-optimized Room with local Published Content and receive the ended-state notice in real time.
