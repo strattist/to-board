@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     authentik_audience: str = ''
     secret_key: str
     llm_provider: str = 'anthropic'
-    anthropic_model: str = 'claude-3-5-haiku-latest'
+    anthropic_model: str = 'claude-haiku-4-5-20251001'
     google_model: str = 'gemini-2.0-flash'
     auth_disabled: bool = False
     extraction_min_tokens: int = 500

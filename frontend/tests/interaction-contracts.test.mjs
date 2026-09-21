@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { activateLinkOnSpace } from '../src/lib/keyboard.js';
 import { createGameFlow } from '../src/lib/create-flow.js';
 import { createDeleteController } from '../src/lib/delete-flow.ts';
-import { createGameWithCover, deleteGame, generateContent, getPreview, startSession, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
+import { createGameWithCover, deleteGame, generateContent, getPreview, getSettings, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
 
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
@@ -11,6 +11,7 @@ const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'u
 const sidebarSource = readFileSync(new URL('../src/components/Sidebar.svelte', import.meta.url), 'utf8');
 const collectionSource = readFileSync(new URL('../src/components/Collection.svelte', import.meta.url), 'utf8');
 const cardSource = readFileSync(new URL('../src/components/GameCard.svelte', import.meta.url), 'utf8');
+const settingsSource = readFileSync(new URL('../src/components/SettingsPage.svelte', import.meta.url), 'utf8');
 assert.match(detailSource, /role="dialog"/);
 assert.match(detailSource, /This action is irreversible/);
 assert.match(detailSource, /on:click={cancelDelete}/);
@@ -47,6 +48,11 @@ assert.match(collectionSource, /No games yet\. Add your first game to build the 
 assert.match(cardSource, /aspect-ratio:2\/3/);
 assert.match(cardSource, /activateLinkOnSpace/);
 assert.doesNotMatch(cardSource, /aria-label={`Open \$\{game\.title\}`}/);
+assert.match(settingsSource, /getSettings/);
+assert.match(settingsSource, /updateSettings/);
+assert.match(settingsSource, /disabled=\{saving \|\| !key\.trim\(\)\}/);
+assert.match(settingsSource, /key = ''/);
+assert.doesNotMatch(settingsSource, /fetch\(/);
 
 let clicked = false;
 let prevented = false;
@@ -110,6 +116,22 @@ assert.deepEqual(JSON.parse(request.options.body), { confirm: true });
 await getPreview('game-1');
 assert.equal(request.path, '/api/games/game-1/preview');
 assert.equal(request.options.credentials, 'include');
+
+globalThis.fetch = async (path, options) => {
+  request = { path, options };
+  return new Response(JSON.stringify({ provider: 'anthropic', configured: false }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+};
+await getSettings();
+assert.equal(request.path, '/api/settings');
+assert.equal(request.options.credentials, 'include');
+await updateSettings('google', 'google-secret');
+assert.equal(request.path, '/api/settings');
+assert.equal(request.options.method, 'PUT');
+assert.equal(request.options.credentials, 'include');
+assert.deepEqual(JSON.parse(request.options.body), { provider: 'google', api_key: 'google-secret' });
 
 globalThis.fetch = async (path, options) => {
   request = { path, options };

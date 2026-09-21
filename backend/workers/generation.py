@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from backend.db.engine import engine
 from backend.models import AppSettings, Content, PipelineState, Rulebook
 from backend.services.content import generation_failed, save_draft
-from backend.services.llm import generate_content
+from backend.services.llm import ProviderError, generate_content, safe_provider_failure
 
 
 async def run_generation(game_id: str, rulebook_id: str) -> None:
@@ -33,5 +33,8 @@ async def run_generation(game_id: str, rulebook_id: str) -> None:
         except Exception as exc:
             current = session.exec(select(Content).where(Content.game_id == game_id)).first()
             if current and current.pipeline_state == PipelineState.generating:
-                generation_failed(session, current, str(exc))
+                # Never persist provider exception text: HTTP clients may
+                # include a request URL or response body in the exception.
+                message = str(exc) if isinstance(exc, ProviderError) else safe_provider_failure(settings.llm_provider)
+                generation_failed(session, current, message)
             session.commit()

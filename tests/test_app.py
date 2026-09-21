@@ -1,7 +1,9 @@
+import asyncio
 import os
 import base64
 import json
 import shutil
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -20,12 +22,14 @@ from PIL import Image
 from sqlmodel import Session, delete, select
 from backend.main import app
 from backend.db.engine import engine
-from backend.core.config import get_settings
+from backend.core.config import Settings, get_settings
+from backend.core.crypto import decrypt_api_key, encrypt_api_key
 from backend.services import games as games_service
-from backend.models import Content, Game, GameSession, PipelineState, Rulebook
+from backend.models import AppSettings, Content, Game, GameSession, PipelineState, Rulebook
 from backend.services.extraction import extract_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
+from backend.services.llm import ProviderError, generate_content
 
 
 @pytest.fixture(autouse=True)
@@ -35,10 +39,22 @@ def reset_test_data():
         db.exec(delete(Rulebook))
         db.exec(delete(Content))
         db.exec(delete(Game))
+        db.exec(delete(AppSettings))
         db.commit()
     shutil.rmtree(DATA / 'uploads', ignore_errors=True)
     (DATA / 'uploads').mkdir(parents=True, exist_ok=True)
-    yield
+    for generated_text in DATA.glob('*.txt'):
+        generated_text.unlink(missing_ok=True)
+    try:
+        yield
+    finally:
+        # Tests may create provider settings; do not let a failed test leak a
+        # secret or provider selection into the next test.
+        with Session(engine) as db:
+            db.exec(delete(AppSettings))
+            db.commit()
+        for generated_text in DATA.glob('*.txt'):
+            generated_text.unlink(missing_ok=True)
 
 
 def encoded_image(format_name: str) -> bytes:
@@ -188,6 +204,277 @@ def test_generation_requires_prerequisites():
         response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
         assert response.status_code == 422
         assert 'extraction' in response.json()['detail'].lower()
+
+
+def test_settings_are_host_protected_encrypted_and_content_preserving():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Settings security'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.published
+            content.draft_quickstart_md = '# Draft'
+            content.draft_cheat_sheet_md = '- Draft rule'
+            content.published_quickstart_md = '# Published'
+            content.published_cheat_sheet_md = '- Published rule'
+            db.add(content)
+            db.commit()
+
+        saved = client.put('/api/settings', json={'provider': 'google', 'api_key': 'google-secret'})
+        assert saved.status_code == 200
+        assert saved.json() == {'provider': 'google', 'configured': True}
+        assert 'google-secret' not in saved.text
+        with Session(engine) as db:
+            settings = db.get(AppSettings, 1)
+            assert settings is not None
+            assert settings.api_key_encrypted != 'google-secret'
+            assert decrypt_api_key(settings.api_key_encrypted) == 'google-secret'
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.published_quickstart_md == '# Published'
+            assert content.published_cheat_sheet_md == '- Published rule'
+            assert content.draft_quickstart_md == '# Draft'
+            assert content.draft_cheat_sheet_md == '- Draft rule'
+
+        assert client.get('/api/settings').json() == {'provider': 'google', 'configured': True}
+        assert client.put('/api/settings', json={'provider': 'openai', 'api_key': 'secret'}).status_code == 422
+        with Session(engine) as db:
+            before_invalid = db.get(AppSettings, 1)
+            assert before_invalid is not None
+            before_provider = before_invalid.llm_provider
+            before_ciphertext = before_invalid.api_key_encrypted
+        assert client.put('/api/settings', json={'provider': 'google', 'api_key': '   '}).status_code == 422
+        with Session(engine) as db:
+            after_invalid = db.get(AppSettings, 1)
+            assert after_invalid is not None
+            assert after_invalid.llm_provider == before_provider
+            assert after_invalid.api_key_encrypted == before_ciphertext
+
+        settings_config = get_settings()
+        previous_auth = settings_config.auth_disabled
+        settings_config.auth_disabled = False
+        try:
+            unauthorized_get = client.get('/api/settings')
+            unauthorized_put = client.put('/api/settings', json={'provider': 'google', 'api_key': 'new-secret'})
+            assert unauthorized_get.status_code == unauthorized_put.status_code == 401
+            assert 'google' not in unauthorized_get.text
+            assert 'new-secret' not in unauthorized_put.text
+        finally:
+            settings_config.auth_disabled = previous_auth
+            with Session(engine) as db:
+                db.exec(delete(AppSettings))
+                db.commit()
+
+
+def test_provider_failure_is_sanitized_and_preserves_published_content(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Provider failure'}).json()
+        extracted = DATA / 'provider-failure.txt'
+        extracted.write_text('rules', encoding='utf-8')
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Existing'
+            content.published_cheat_sheet_md = '- Existing rule'
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='google', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='rules.pdf', extracted_text_path=str(extracted)))
+            db.commit()
+
+        async def fail_provider(*_args):
+            raise RuntimeError('https://provider.invalid?key=google-secret')
+
+        monkeypatch.setattr('backend.workers.generation.generate_content', fail_provider)
+        rulebook_id = None
+        with Session(engine) as db:
+            rulebook_id = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one().id
+        import asyncio
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.published
+            assert content.published_quickstart_md == '# Existing'
+            assert content.published_cheat_sheet_md == '- Existing rule'
+            assert content.error_message == 'Google provider request failed.'
+            assert 'google-secret' not in content.error_message
+            assert 'provider.invalid' not in content.error_message
+            db.exec(delete(AppSettings))
+            db.commit()
+
+
+def test_successful_generation_saves_the_paired_draft(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Generated draft'}).json()
+        extracted = DATA / 'generated-draft.txt'
+        extracted.write_text('rules', encoding='utf-8')
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.ready_to_generate
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(id=rulebook_id, game_id=game['id'], pdf_path='rules.pdf', extracted_text_path=str(extracted)))
+            db.commit()
+
+        async def successful_provider(*_args):
+            return '# Start', '- Rule'
+
+        monkeypatch.setattr('backend.workers.generation.generate_content', successful_provider)
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.draft
+            assert content.draft_quickstart_md == '# Start'
+            assert content.draft_cheat_sheet_md == '- Rule'
+            assert content.published_quickstart_md is None
+            assert content.published_cheat_sheet_md is None
+
+
+def test_provider_error_message_is_persisted_and_published_content_survives(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Anthropic model failure'}).json()
+        extracted = DATA / 'anthropic-model-failure.txt'
+        extracted.write_text('rules', encoding='utf-8')
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Existing guide'
+            content.published_cheat_sheet_md = '- Existing rule'
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(id=rulebook_id, game_id=game['id'], pdf_path='rules.pdf', extracted_text_path=str(extracted)))
+            db.commit()
+
+        async def fail_with_provider_error(*_args):
+            raise ProviderError('Anthropic model was not found or is unavailable.')
+
+        monkeypatch.setattr('backend.workers.generation.generate_content', fail_with_provider_error)
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.published
+            assert content.error_message == 'Anthropic model was not found or is unavailable.'
+            assert content.published_quickstart_md == '# Existing guide'
+            assert content.published_cheat_sheet_md == '- Existing rule'
+
+
+def test_llm_provider_branches_use_secret_headers_and_sanitize_failures(monkeypatch):
+    calls = []
+
+    class MockResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class MockAsyncClient:
+        def __init__(self, **kwargs):
+            self.timeout = kwargs['timeout']
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if 'anthropic.com' in url:
+                payload = {'content': [{'text': '{"quickstart_md":"# Start","cheat_sheet_md":"- Rule"}'}]}
+            else:
+                payload = {'candidates': [{'content': {'parts': [{'text': '{"quickstart_md":"# Google start","cheat_sheet_md":"- Google rule"}'}]}}]}
+            return MockResponse(200, payload)
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', MockAsyncClient)
+    anthropic = AppSettings(llm_provider='anthropic', api_key_encrypted=encrypt_api_key('anthropic-secret'))
+    google = AppSettings(llm_provider='google', api_key_encrypted=encrypt_api_key('google-secret'))
+    default_runtime = Settings(secret_key='test-secret', _env_file=None)
+    monkeypatch.setattr('backend.services.llm.get_settings', lambda: default_runtime)
+    assert asyncio.run(generate_content(anthropic, 'rules')) == ('# Start', '- Rule')
+    assert calls[0][1]['json']['model'] == 'claude-haiku-4-5-20251001'
+    calls.clear()
+
+    monkeypatch.setattr(
+        'backend.services.llm.get_settings',
+        lambda: SimpleNamespace(anthropic_model='configured-anthropic', google_model='configured-google'),
+    )
+    assert asyncio.run(generate_content(anthropic, 'rules')) == ('# Start', '- Rule')
+    assert asyncio.run(generate_content(google, 'rules')) == ('# Google start', '- Google rule')
+    anthropic_url, anthropic_kwargs = calls[0]
+    google_url, google_kwargs = calls[1]
+    assert anthropic_url == 'https://api.anthropic.com/v1/messages'
+    assert anthropic_kwargs['json']['model'] == 'configured-anthropic'
+    assert anthropic_kwargs['headers']['x-api-key'] == 'anthropic-secret'
+    assert google_url == 'https://generativelanguage.googleapis.com/v1beta/models/configured-google:generateContent'
+    assert '?key=' not in google_url
+    assert google_kwargs['headers']['x-goog-api-key'] == 'google-secret'
+
+    class AuthFailureClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(401, {'error': {'message': 'invalid key google-secret'}})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', AuthFailureClient)
+    with pytest.raises(ProviderError) as auth_error:
+        asyncio.run(generate_content(google, 'rules'))
+    assert str(auth_error.value) == 'Google rejected the API key.'
+    assert 'google-secret' not in str(auth_error.value)
+
+    class MalformedClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(200, {'candidates': []})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', MalformedClient)
+    with pytest.raises(ProviderError) as malformed_error:
+        asyncio.run(generate_content(google, 'rules'))
+    assert str(malformed_error.value) == 'Google returned an invalid response.'
+    assert malformed_error.value.__suppress_context__ is True
+    assert malformed_error.value.__cause__ is None
+
+    class AnthropicModelFailureClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(404, {'error': {'message': 'model configured-anthropic is not found'}})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', AnthropicModelFailureClient)
+    with pytest.raises(ProviderError) as model_error:
+        asyncio.run(generate_content(anthropic, 'rules'))
+    assert str(model_error.value) == 'Anthropic model was not found or is unavailable.'
+    assert 'configured-anthropic' not in str(model_error.value)
+
+    class AnthropicProviderFailureClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(503, {'error': {'message': 'provider unavailable'}})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', AnthropicProviderFailureClient)
+    with pytest.raises(ProviderError) as provider_error:
+        asyncio.run(generate_content(anthropic, 'rules'))
+    assert str(provider_error.value) == 'Anthropic provider is unavailable.'
+
+    status_expectations = {
+        400: 'Anthropic model or request configuration was rejected.',
+        403: 'Anthropic model or provider access was rejected.',
+        429: 'Anthropic provider rate limit was reached.',
+    }
+
+    for status_code, expected_message in status_expectations.items():
+        class StatusFailureClient(MockAsyncClient):
+            async def post(self, url, **kwargs):
+                return MockResponse(status_code, {'error': {'message': 'sensitive provider response'}})
+
+        monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', StatusFailureClient)
+        with pytest.raises(ProviderError) as status_error:
+            asyncio.run(generate_content(anthropic, 'rules'))
+        assert str(status_error.value) == expected_message
+        assert 'sensitive provider response' not in str(status_error.value)
 
 
 def test_publish_and_reject_are_atomic_and_preserve_published_content():
