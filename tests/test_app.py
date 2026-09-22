@@ -17,6 +17,7 @@ os.environ['AUTH_DISABLED'] = 'true'
 os.environ['SECRET_KEY'] = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 from PIL import Image
 from sqlmodel import Session, delete, select
@@ -236,6 +237,9 @@ def test_settings_are_host_protected_encrypted_and_content_preserving():
 
         assert client.get('/api/settings').json() == {'provider': 'google', 'configured': True}
         assert client.put('/api/settings', json={'provider': 'openai', 'api_key': 'secret'}).status_code == 422
+        malformed = client.put('/api/settings', json={'api_key': 'malformed-secret'})
+        assert malformed.status_code == 422
+        assert 'malformed-secret' not in malformed.text
         with Session(engine) as db:
             before_invalid = db.get(AppSettings, 1)
             assert before_invalid is not None
@@ -302,6 +306,32 @@ def test_provider_failure_is_sanitized_and_preserves_published_content(monkeypat
             db.commit()
 
 
+def test_generation_read_failure_is_not_reported_as_provider_failure():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Missing extracted text'}).json()
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.ready_to_generate
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='google', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(
+                id=rulebook_id,
+                game_id=game['id'],
+                pdf_path='rules.pdf',
+                extracted_text_path=str(DATA / 'missing-extracted-text.txt'),
+            ))
+            db.commit()
+
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.ready_to_generate
+            assert content.error_message == 'Rulebook text could not be read.'
+
+
 def test_successful_generation_saves_the_paired_draft(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Generated draft'}).json()
@@ -350,7 +380,7 @@ def test_provider_error_message_is_persisted_and_published_content_survives(monk
             db.commit()
 
         async def fail_with_provider_error(*_args):
-            raise ProviderError('Anthropic model was not found or is unavailable.')
+            raise ProviderError('anthropic', 'model_not_found')
 
         monkeypatch.setattr('backend.workers.generation.generate_content', fail_with_provider_error)
         asyncio.run(run_generation(game['id'], rulebook_id))
@@ -440,6 +470,33 @@ def test_llm_provider_branches_use_secret_headers_and_sanitize_failures(monkeypa
     assert malformed_error.value.__suppress_context__ is True
     assert malformed_error.value.__cause__ is None
 
+    class AnthropicMalformedClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(200, {'content': []})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', AnthropicMalformedClient)
+    with pytest.raises(ProviderError) as anthropic_malformed_error:
+        asyncio.run(generate_content(anthropic, 'rules'))
+    assert str(anthropic_malformed_error.value) == 'Anthropic returned an invalid response.'
+
+    class GoogleSafetyClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            return MockResponse(200, {'promptFeedback': {'blockReason': 'SAFETY'}})
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', GoogleSafetyClient)
+    with pytest.raises(ProviderError) as safety_error:
+        asyncio.run(generate_content(google, 'rules'))
+    assert str(safety_error.value) == 'Google blocked the requested content.'
+
+    class TimeoutClient(MockAsyncClient):
+        async def post(self, url, **kwargs):
+            raise httpx.ReadTimeout('timed out')
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', TimeoutClient)
+    with pytest.raises(ProviderError) as timeout_error:
+        asyncio.run(generate_content(google, 'rules'))
+    assert str(timeout_error.value) == 'Google provider is unavailable.'
+
     class AnthropicModelFailureClient(MockAsyncClient):
         async def post(self, url, **kwargs):
             return MockResponse(404, {'error': {'message': 'model configured-anthropic is not found'}})
@@ -475,6 +532,55 @@ def test_llm_provider_branches_use_secret_headers_and_sanitize_failures(monkeypa
             asyncio.run(generate_content(anthropic, 'rules'))
         assert str(status_error.value) == expected_message
         assert 'sensitive provider response' not in str(status_error.value)
+
+
+def test_anthropic_accepts_json_with_leading_text_and_fence(monkeypatch):
+    request_bodies = []
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                'stop_reason': 'end_turn',
+                'content': [{
+                    'type': 'text',
+                    'text': 'Here is the requested content:\n```json\n'
+                    '{"quickstart_md":"# Start","cheat_sheet_md":"- Rule"}\n```',
+                }],
+            }
+
+    class MockAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **kwargs):
+            request_bodies.append(kwargs['json'])
+            return MockResponse()
+
+    monkeypatch.setattr('backend.services.llm.httpx.AsyncClient', MockAsyncClient)
+    settings = AppSettings(llm_provider='anthropic', api_key_encrypted=encrypt_api_key('anthropic-secret'))
+    monkeypatch.setattr(
+        'backend.services.llm.get_settings',
+        lambda: SimpleNamespace(anthropic_model='configured-anthropic', google_model='configured-google'),
+    )
+
+    assert asyncio.run(generate_content(settings, 'rules')) == ('# Start', '- Rule')
+    assert request_bodies[0]['max_tokens'] == 10000
+
+
+def test_model_overrides_are_loaded_from_environment(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_MODEL', 'configured-anthropic')
+    monkeypatch.setenv('GOOGLE_MODEL', 'configured-google')
+    settings = Settings(secret_key='test-secret', _env_file=None)
+    assert settings.anthropic_model == 'configured-anthropic'
+    assert settings.google_model == 'configured-google'
 
 
 def test_publish_and_reject_are_atomic_and_preserve_published_content():

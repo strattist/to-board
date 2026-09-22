@@ -71,3 +71,22 @@
 - source_spec: `spec-1-5-implement-the-host-collection-and-game-detail-experience.md`
   summary: localStorage access is not guarded in restricted browsers.
   evidence: `frontend/src/App.svelte:40-51` reads and writes localStorage without a guard; this behavior predates the reviewed change.
+
+## Deferred from: code review of spec-2-1-configure-and-protect-the-llm-provider.md (2026-09-22)
+
+- source_spec: `spec-2-1-configure-and-protect-the-llm-provider.md`
+  summary: Reject whitespace-only extracted text before cloud generation.
+  evidence: `backend/services/extraction.py` has marked empty extraction output ready since before this story; tightening that prerequisite belongs to the extraction story.
+- source_spec: `spec-2-1-configure-and-protect-the-llm-provider.md`
+  summary: Serialize first-time AppSettings initialization under concurrent requests.
+  evidence: The GET/PUT singleton insert race predates this story and requires a broader database-startup or conflict-handling decision.
+- source_spec: `spec-2-1-configure-and-protect-the-llm-provider.md`
+  summary: Add a maximum API-key length bound before encryption.
+  evidence: The Settings API already accepted unbounded keys before this story; selecting provider-specific limits is broader hardening work.
+
+## Deferred story: 2.7 — Make Rulebook extraction optional to start a Session
+
+- story_id: `2-7`
+  summary: Allow the Host to start a Session when Published Content is already available, even if the current Rulebook extraction is absent or still in progress.
+  rationale: Rulebook extraction is required for new Content generation, but it should not block a game night that can already use the previously published Quick-start Guide and Cheat Sheet.
+  scope: Reconcile the server-side Session readiness check, Game Detail action state, and related tests while preserving extraction as a prerequisite for generation and keeping Guest Rooms backed only by Published Content.

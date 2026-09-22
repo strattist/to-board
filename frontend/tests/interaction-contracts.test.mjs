@@ -5,6 +5,7 @@ import { createGameFlow } from '../src/lib/create-flow.js';
 import { createDeleteController } from '../src/lib/delete-flow.ts';
 import { createGameWithCover, deleteGame, generateContent, getPreview, getSettings, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
+import { createSettingsController } from '../src/lib/settings-flow.ts';
 
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
@@ -50,6 +51,8 @@ assert.match(cardSource, /activateLinkOnSpace/);
 assert.doesNotMatch(cardSource, /aria-label={`Open \$\{game\.title\}`}/);
 assert.match(settingsSource, /getSettings/);
 assert.match(settingsSource, /updateSettings/);
+assert.match(settingsSource, /createSettingsController/);
+assert.match(settingsSource, /on:submit\|preventDefault={save}/);
 assert.match(settingsSource, /disabled=\{saving \|\| !key\.trim\(\)\}/);
 assert.match(settingsSource, /key = ''/);
 assert.doesNotMatch(settingsSource, /fetch\(/);
@@ -132,6 +135,32 @@ assert.equal(request.path, '/api/settings');
 assert.equal(request.options.method, 'PUT');
 assert.equal(request.options.credentials, 'include');
 assert.deepEqual(JSON.parse(request.options.body), { provider: 'google', api_key: 'google-secret' });
+
+const settingsRequests = [];
+const settingsController = createSettingsController({
+  getSettings: async () => ({ provider: 'google', configured: true }),
+  updateSettings: async (provider, apiKey) => {
+    settingsRequests.push([provider, apiKey]);
+    return { provider, configured: true };
+  },
+});
+await settingsController.load();
+assert.deepEqual(settingsController.state, {
+  provider: 'google', configured: true, loaded: true, loading: false,
+  saving: false, error: '', message: '',
+});
+assert.equal(await settingsController.save('controller-secret'), true);
+assert.deepEqual(settingsRequests, [['google', 'controller-secret']]);
+assert.equal(settingsController.state.message, 'Settings saved.');
+
+const failedSettingsController = createSettingsController({
+  getSettings: async () => { throw new Error('load failed'); },
+  updateSettings: async () => { throw new Error('must not save before load'); },
+});
+await failedSettingsController.load();
+assert.equal(failedSettingsController.state.loaded, false);
+assert.equal(await failedSettingsController.save('blocked-secret'), false);
+assert.equal(failedSettingsController.state.error, 'load failed');
 
 globalThis.fetch = async (path, options) => {
   request = { path, options };
