@@ -58,11 +58,11 @@ URLs, `.env` examples, logs, or frontend code. Anthropic's current lifecycle
 and replacement guidance is available in its [model deprecations
 documentation](https://docs.anthropic.com/en/docs/about-claude/model-deprecations).
 
-To list the Anthropic model IDs enabled for your key, keep the key in an
-environment variable and call the Models API:
+To list the Anthropic model IDs enabled for your key, enter it without putting
+the secret in shell history, then call the Models API:
 
 ```bash
-export ANTHROPIC_API_KEY='your-key'
+read -r -s -p 'Anthropic API key: ' ANTHROPIC_API_KEY; printf '\n'; export ANTHROPIC_API_KEY
 curl -fsS https://api.anthropic.com/v1/models \
   -H "x-api-key: ${ANTHROPIC_API_KEY}" \
   -H 'anthropic-version: 2023-06-01' \
