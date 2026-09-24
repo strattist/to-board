@@ -3,6 +3,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import { deleteGame, generateContent, startSession, uploadGameCover, uploadRulebook as uploadRulebookRequest } from '../lib/api';
   import { createDeleteController } from '../lib/delete-flow';
+  import { canGenerate, shouldAllowLowQuality } from '../lib/generation-flow.js';
   import { confirmRulebookReplacement, isPipelineBusy } from '../lib/rulebook-flow.js';
 
   export let game: any;
@@ -15,6 +16,8 @@
   let coverBusy = false;
   let sessionBusy = false;
   let generateBusy = false;
+  let allowLowQuality = false;
+  let warningIdentity = '';
   let actionError = '';
   let actionStatus = '';
   let deleteDialogOpen = false;
@@ -36,6 +39,12 @@
 
   $: extractionBusy = !!game && isPipelineBusy(game.pipeline_state);
   $: hasExtractedText = !!game?.rulebook?.has_extracted_text;
+  $: extractionWarning = game?.extraction_warning || '';
+  $: nextWarningIdentity = `${game?.id || ''}:${game?.rulebook?.id || ''}:${extractionWarning}`;
+  $: if (nextWarningIdentity !== warningIdentity) { allowLowQuality = false; warningIdentity = nextWarningIdentity; }
+  $: qualityAcknowledged = !extractionWarning || allowLowQuality;
+  $: generationEnabled = canGenerate({ hasExtractedText, extractionWarning, allowLowQuality, extractionBusy, uploadBusy, generateBusy });
+  $: if (!extractionWarning) allowLowQuality = false;
   $: hasPublishedContent = !!game?.has_published_content;
   $: pipelineStatus = game?.pipeline_state === 'extracting'
     ? 'Rulebook uploaded. Extracting text…'
@@ -46,6 +55,8 @@
     ? 'Finish Rulebook upload before generating Content.'
     : !hasExtractedText
     ? 'Complete Rulebook extraction before generating Content.'
+    : extractionWarning && !allowLowQuality
+      ? 'Acknowledge the extraction warning before generating Content.'
     : extractionBusy
       ? 'Content generation is unavailable while the pipeline is busy.'
       : '';
@@ -94,13 +105,14 @@
   }
 
   async function generate() {
-    if (!hasExtractedText || extractionBusy || uploadBusy || generateBusy) return;
+    if (!generationEnabled) return;
     if (!window.confirm('Generate content using the configured cloud provider?')) return;
     actionError = '';
     actionStatus = '';
     generateBusy = true;
     try {
-      await generateContent(game.id);
+      if (shouldAllowLowQuality(extractionWarning, allowLowQuality)) await generateContent(game.id, true);
+      else await generateContent(game.id);
       await refreshAfterAction('Content generation started.');
     } catch (error) {
       actionError = errorMessage(error, 'Content generation could not be started.');
@@ -195,7 +207,7 @@
   <section class="page" aria-labelledby="game-title">
     <a href="/" on:click|preventDefault={() => onNavigate('/')}>← Collection</a>
     <div class="head">
-      <div><h1 id="game-title">{game.title}</h1><StatusBadge state={game.pipeline_state}/></div>
+      <div><h1 id="game-title">{game.title}</h1><StatusBadge state={game.pipeline_state} warning={extractionWarning}/></div>
       <div class="actions">
         <button class="primary" disabled={!hasPublishedContent || extractionBusy || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
         <button class="button" disabled={!hasPublishedContent || extractionBusy} on:click={openPreview}>Preview</button>
@@ -219,12 +231,18 @@
       <input id="game-rulebook-upload" type="file" accept=".pdf,application/pdf" disabled={uploadBusy} on:change={uploadRulebook}/>
       {#if uploadBusy}<p class="muted" role="status" aria-live="polite">{uploadStatus}</p>{/if}
       {#if extractionBusy}<p class="muted" role="status" aria-live="polite" aria-busy="true">{pipelineStatus}</p>{/if}
+      {#if extractionWarning}
+        <div class="quality-warning" role="alert" aria-live="assertive">
+          <p>{extractionWarning}</p>
+          <label><input type="checkbox" bind:checked={allowLowQuality} disabled={extractionBusy || uploadBusy}/> I have reviewed this warning and want to continue with this extraction.</label>
+        </div>
+      {/if}
       {#if game.rulebook}<a class="button" href={`/games/${game.id}/pdf`}>View rulebook</a>{:else}<p class="action-note">Upload a Rulebook PDF to view it here.</p>{/if}
     </div>
     <div class="panel">
       <h2>Content</h2>
       {#if game.has_draft_content}<a class="button" href={`/games/${game.id}/review`}>Review draft</a>{/if}
-      <button class="primary" disabled={!hasExtractedText || extractionBusy || uploadBusy || generateBusy} aria-busy={generateBusy} on:click={generate}>{generateBusy ? 'Starting…' : 'Generate content'}</button>
+      <button class="primary" disabled={!generationEnabled} aria-busy={generateBusy} on:click={generate}>{generateBusy ? 'Starting…' : 'Generate content'}</button>
       {#if generationReason}<p class="action-note">{generationReason}</p>{/if}
     </div>
     <button bind:this={deleteTrigger} class="danger" on:click={openDeleteDialog}>Delete game</button>
@@ -247,5 +265,5 @@
 {/if}
 
 <style>
-  .page{max-width:1000px;margin:auto;padding:32px}.head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin:24px 0}.head h1{font-size:32px;margin:0 0 10px}.actions{display:flex;gap:8px;flex-wrap:wrap}.panel{background:#1e1c27;border:1px solid #29263c;border-radius:16px;padding:20px;margin:20px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.panel input[type=file]{min-height:44px}.panel label{min-height:44px;display:flex;align-items:center}.primary,.button,.danger,.ghost{min-height:44px;padding:10px 20px;border-radius:10px;text-decoration:none;cursor:pointer}.primary{background:#a277ff;color:#15141b;border:0}.button{background:transparent;border:1px solid #29263c;color:#edecee}.primary:disabled,.button:disabled,.danger:disabled,.ghost:disabled{opacity:.45;cursor:not-allowed}.danger{background:transparent;color:#ff6767;border:1px solid #ff676755}.ghost{background:transparent;color:#edecee;border:1px solid #29263c}.primary:focus-visible,.button:focus-visible,.danger:focus-visible,.ghost:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.muted{color:#6d6d6d}.action-note{color:#b7b4c1;margin:0}.action-status{color:#61ffca}.form-error{color:#ff6767}.modal-backdrop{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px;z-index:30}.modal{max-width:520px;width:100%;background:#1e1c27;border:1px solid #453b62;border-radius:16px;padding:24px;box-shadow:0 18px 50px #0008}.modal h2{margin:0 0 12px}.modal p{line-height:1.5}.modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}.modal button:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.confirm{background:#ff6767;color:#15141b;border-color:#ff6767}@media(max-width:767px){.page{padding:32px}.head{flex-direction:column;align-items:flex-start}.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
+.page{max-width:1000px;margin:auto;padding:32px}.head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin:24px 0}.head h1{font-size:32px;margin:0 0 10px}.actions{display:flex;gap:8px;flex-wrap:wrap}.panel{background:#1e1c27;border:1px solid #29263c;border-radius:16px;padding:20px;margin:20px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.panel input[type=file]{min-height:44px}.panel label{min-height:44px;display:flex;align-items:center}.primary,.button,.danger,.ghost{min-height:44px;padding:10px 20px;border-radius:10px;text-decoration:none;cursor:pointer}.primary{background:#a277ff;color:#15141b;border:0}.button{background:transparent;border:1px solid #29263c;color:#edecee}.primary:disabled,.button:disabled,.danger:disabled,.ghost:disabled{opacity:.45;cursor:not-allowed}.danger{background:transparent;color:#ff6767;border:1px solid #ff676755}.ghost{background:transparent;color:#edecee;border:1px solid #29263c}.primary:focus-visible,.button:focus-visible,.danger:focus-visible,.ghost:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.muted{color:#6d6d6d}.action-note{color:#b7b4c1;margin:0}.action-status{color:#61ffca}.form-error{color:#ff6767}.quality-warning{width:100%;padding:12px 14px;border-left:3px solid #ffca85;color:#ffca85;background:#ffca851a}.quality-warning p{margin:0 0 10px;line-height:1.5}.quality-warning label{min-height:44px;gap:8px;color:#edecee}.quality-warning input{width:18px;height:18px}.modal-backdrop{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px;z-index:30}.modal{max-width:520px;width:100%;background:#1e1c27;border:1px solid #453b62;border-radius:16px;padding:24px;box-shadow:0 18px 50px #0008}.modal h2{margin:0 0 12px}.modal p{line-height:1.5}.modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}.modal button:focus-visible{outline:2px solid #a277ff;outline-offset:2px}.confirm{background:#ff6767;color:#15141b;border-color:#ff6767}@media(max-width:767px){.page{padding:32px}.head{flex-direction:column;align-items:flex-start}.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
 </style>

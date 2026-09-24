@@ -13,9 +13,10 @@ from backend.core.config import get_settings
 from backend.core.utils import uuid4_str
 from backend.db.engine import get_session
 from backend.models import Content, Game, Rulebook, PipelineState, AppSettings
-from backend.services.content import begin_generation, get_or_create, publish, reject
+from backend.services.content import begin_generation, get_or_create, is_extraction_warning, publish, reject
+from backend.services.extraction import count_extracted_tokens
 from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, game_deletion_pending, game_operation_lock, retry_pending_game_cleanup, validate_cover
-from backend.services.rulebooks import replace_rulebook, validate_pdf
+from backend.services.rulebooks import replace_rulebook, safe_upload_path, validate_pdf
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 
@@ -27,6 +28,7 @@ class GameUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
 class GenerationRequest(BaseModel):
     confirm: bool = False
+    allow_low_quality: bool = False
 
 def payload(session: Session, game: Game) -> dict:
     rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game.id)).first()
@@ -44,12 +46,33 @@ def payload(session: Session, game: Game) -> dict:
         except OSError:
             pass
         cover_url = f'/api/games/{game.id}/cover/file{version}'
+    persisted_warning = content.error_message if is_extraction_warning(content.error_message) else None
+    extracted_path = safe_upload_path(
+        rulebook.extracted_text_path if rulebook else None,
+        get_settings().uploads_path.resolve(),
+    )
+    cache_error = None
+    has_extracted_text = False
+    if extracted_path and extracted_path.is_file():
+        try:
+            with extracted_path.open('r', encoding='utf-8') as handle:
+                handle.read(1)
+            has_extracted_text = True
+        except (OSError, UnicodeError):
+            cache_error = 'Rulebook text could not be read. Re-upload the Rulebook to try again.'
+    elif rulebook and rulebook.extracted_text_path:
+        cache_error = 'Rulebook extraction is not complete.'
+    current_warning = persisted_warning if has_extracted_text else None
+    fatal_error = cache_error or (None if persisted_warning else content.error_message)
     return {
         'id': game.id, 'title': game.title, 'cover_image_path': game.cover_image_path,
         'cover_url': cover_url,
         'room_slug_prefix': game.room_slug_prefix, 'created_at': created_at,
-        'rulebook': {'id': rulebook.id, 'uploaded_at': rulebook.uploaded_at, 'has_extracted_text': bool(rulebook.extracted_text_path)} if rulebook else None,
-        'pipeline_state': content.pipeline_state.value, 'error_message': content.error_message,
+        'rulebook': {'id': rulebook.id, 'uploaded_at': rulebook.uploaded_at, 'has_extracted_text': has_extracted_text} if rulebook else None,
+        'pipeline_state': content.pipeline_state.value, 'error_message': fatal_error,
+        # Keep the persisted warning separate from fatal failures in the
+        # public DTO. Neither cache paths nor token source data are exposed.
+        'extraction_warning': current_warning,
         'has_published_content': bool(content.published_quickstart_md and content.published_cheat_sheet_md),
         'has_draft_content': bool(content.draft_quickstart_md and content.draft_cheat_sheet_md),
     }
@@ -210,7 +233,22 @@ def generate(game_id: str, body: GenerationRequest, background_tasks: Background
     if not game: raise HTTPException(404, 'Game not found.')
     if not rulebook or not rulebook.extracted_text_path: raise HTTPException(422, 'Rulebook extraction is not complete.')
     if not settings or not settings.api_key_encrypted: raise HTTPException(422, 'API key is missing — add one in Settings.')
+    extracted_path = safe_upload_path(
+        rulebook.extracted_text_path if rulebook else None,
+        get_settings().uploads_path.resolve(),
+    )
+    if not extracted_path or not extracted_path.is_file(): raise HTTPException(422, 'Rulebook extraction is not complete.')
     if not body.confirm: raise HTTPException(400, 'Confirmation required.')
+    try:
+        token_count = count_extracted_tokens(str(extracted_path))
+    except (OSError, UnicodeError):
+        raise HTTPException(422, 'Rulebook extraction is not complete.') from None
+    if token_count < get_settings().extraction_min_tokens and not body.allow_low_quality:
+        raise HTTPException(
+            422,
+            'Rulebook text extraction is below the recommended minimum. '
+            'Set allow_low_quality to true to acknowledge this warning before generating.',
+        )
     content = get_or_create(session, game_id)
     if content.pipeline_state == PipelineState.generating: raise HTTPException(409, 'Content generation is already in progress.')
     begin_generation(session, game_id)

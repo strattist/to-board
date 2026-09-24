@@ -2,7 +2,6 @@ import asyncio
 import os
 from pathlib import Path
 from uuid import uuid4
-from backend.core.config import get_settings
 
 def _remove_temporary(path: Path) -> None:
     try:
@@ -35,3 +34,12 @@ def extract_pdf(pdf_path: str, output_path: str) -> int:
 async def extract_pdf_async(pdf_path: str, output_path: str) -> int:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, extract_pdf, pdf_path, output_path)
+
+
+def count_extracted_tokens(path: str) -> int:
+    """Count words from the durable extraction cache.
+
+    Generation uses this server-side check rather than trusting a value sent
+    by the browser.  The caller is responsible for handling read failures.
+    """
+    return len(Path(path).read_text(encoding='utf-8').split())

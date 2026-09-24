@@ -4,6 +4,20 @@ from sqlmodel import Session, select
 from backend.core.utils import uuid4_str
 from backend.models import Content, PipelineState
 
+EXTRACTION_WARNING_PREFIX = 'Rulebook text extraction is below the recommended minimum.'
+
+
+def extraction_warning(token_count: int, minimum_tokens: int) -> str:
+    return (
+        f'{EXTRACTION_WARNING_PREFIX} The cache contains {token_count} words; '
+        f'the recommended minimum is {minimum_tokens}. Review the Rulebook '
+        'before generating, or explicitly acknowledge this warning to continue.'
+    )
+
+
+def is_extraction_warning(message: str | None) -> bool:
+    return bool(message and message.startswith(EXTRACTION_WARNING_PREFIX))
+
 TRANSITIONS = {
     PipelineState.no_rulebook: {PipelineState.extracting},
     PipelineState.extracting: {PipelineState.ready_to_generate, PipelineState.no_rulebook},
@@ -43,10 +57,10 @@ def reset_for_rulebook(session: Session, content: Content) -> Content:
 def begin_extraction(session: Session, game_id: str) -> Content:
     return transition(session, get_or_create(session, game_id), PipelineState.extracting)
 
-def mark_extraction_complete(session: Session, game_id: str) -> Content:
+def mark_extraction_complete(session: Session, game_id: str, warning: str | None = None) -> Content:
     content = get_or_create(session, game_id)
     transition(session, content, PipelineState.ready_to_generate)
-    content.error_message = None
+    content.error_message = warning
     return content
 
 def mark_extraction_failed(session: Session, game_id: str, message: str) -> Content:

@@ -1,8 +1,9 @@
 import asyncio
-from pathlib import Path
 from sqlmodel import Session, select
 from backend.db.engine import engine
+from backend.core.config import get_settings
 from backend.models import AppSettings, Content, PipelineState, Rulebook
+from backend.services.rulebooks import safe_upload_path
 from backend.services.content import generation_failed, save_draft
 from backend.services.llm import ProviderError, generate_content, safe_provider_failure
 
@@ -26,12 +27,16 @@ async def run_generation(game_id: str, rulebook_id: str) -> None:
         if not current_rulebook or current_rulebook.id != rulebook_id:
             return
         settings = session.get(AppSettings, 1)
-        if not settings or not rulebook.extracted_text_path:
+        extracted_path = safe_upload_path(
+            rulebook.extracted_text_path,
+            get_settings().uploads_path.resolve(),
+        )
+        if not settings or not extracted_path:
             generation_failed(session, content, 'Generation prerequisites are no longer available.')
             session.commit()
             return
         try:
-            text = Path(rulebook.extracted_text_path).read_text(encoding='utf-8')
+            text = extracted_path.read_text(encoding='utf-8')
         except Exception:
             generation_failed(session, content, 'Rulebook text could not be read.')
             session.commit()
