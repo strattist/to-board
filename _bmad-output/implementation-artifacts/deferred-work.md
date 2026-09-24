@@ -90,3 +90,22 @@
   summary: Allow the Host to start a Session when Published Content is already available, even if the current Rulebook extraction is absent or still in progress.
   rationale: Rulebook extraction is required for new Content generation, but it should not block a game night that can already use the previously published Quick-start Guide and Cheat Sheet.
   scope: Reconcile the server-side Session readiness check, Game Detail action state, and related tests while preserving extraction as a prerequisite for generation and keeping Guest Rooms backed only by Published Content.
+
+- source_spec: `spec-2-2-extract-rulebook-text-locally.md`
+  summary: Remove the pre-existing absolute PDF path from the Host Rulebook info response and harden all persisted Rulebook path validation.
+  evidence: `GET /api/games/{id}/rulebook` still returns `pdf_path`, and the broader storage-path trust boundary predates this extraction-quality change; resolving it needs a focused security/storage review.
+
+## Deferred from: code review of spec-2-2-extract-rulebook-text-locally.md (2026-09-24)
+
+- source_spec: `spec-2-2-extract-rulebook-text-locally.md`
+  summary: Rulebook metadata still exposes the absolute PDF path.
+  evidence: `backend/routers/games.py:198-208` returns `pdf_path`; this endpoint predates Story 2.2 and is already recorded as deferred storage/security work.
+- source_spec: `spec-2-2-extract-rulebook-text-locally.md`
+  summary: PDF delivery still trusts persisted paths without uploads-root containment.
+  evidence: `backend/routers/games.py:210-221` serves the persisted path directly; containment hardening predates this story.
+- source_spec: `spec-2-2-extract-rulebook-text-locally.md`
+  summary: Stale-worker cleanup removes only the final cache and not matching partial files.
+  evidence: `backend/workers/extraction.py:22-27` predates the current extraction-quality changes and broader stale-artifact cleanup needs a focused storage decision.
+- source_spec: `spec-2-2-extract-rulebook-text-locally.md`
+  summary: The extraction threshold accepts negative configuration values.
+  evidence: `backend/core/config.py:16` predates this story; changing configuration validation is outside the frozen extraction behavior.

@@ -13,7 +13,7 @@
   import QRReveal from './components/QRReveal.svelte';
   import { createGame as createGameRequest, createGameWithCover, getGames } from './lib/api';
   import { createGameFlow } from './lib/create-flow.js';
-  import { isPipelineBusy } from './lib/rulebook-flow.js';
+  import { hasBusyPipeline } from './lib/polling.js';
   let path = window.location.pathname; let games:any[]=[]; let error=''; let loading=true; let collapsed=false; let mobileOpen=false; let mobileTrigger: HTMLButtonElement;
   let refreshVersion = 0;
   const refresh = async(throwOnError = false): Promise<boolean>=>{
@@ -43,8 +43,7 @@
     collapsed = storedCollapse === null ? window.innerWidth < 900 : storedCollapse === 'true';
     const handler=()=>{path=window.location.pathname;void closeMobileDrawer();void refresh()};
     const pipelineTimer=window.setInterval(()=>{
-      const active=games.find((game)=>game.id===gameId);
-      if(active && isPipelineBusy(active.pipeline_state)) void refresh();
+      if(hasBusyPipeline(games)) void refresh();
     },5000);
     window.addEventListener('popstate',handler);
     void refresh();

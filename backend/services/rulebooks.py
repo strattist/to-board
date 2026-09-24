@@ -102,6 +102,11 @@ def _safe_upload_path(path: str | None, uploads_root: Path) -> Path | None:
     return None
 
 
+def safe_upload_path(path: str | None, uploads_root: Path) -> Path | None:
+    """Resolve a persisted Rulebook path only when it stays in uploads_root."""
+    return _safe_upload_path(path, uploads_root)
+
+
 def _track_cleanup(paths: list[Path], uploads_root: Path) -> None:
     pending = set(_read_cleanup_journal(uploads_root))
     for path in paths:

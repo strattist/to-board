@@ -271,7 +271,7 @@ def test_settings_are_host_protected_encrypted_and_content_preserving():
 def test_provider_failure_is_sanitized_and_preserves_published_content(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Provider failure'}).json()
-        extracted = DATA / 'provider-failure.txt'
+        extracted = DATA / 'uploads' / 'provider-failure.txt'
         extracted.write_text('rules', encoding='utf-8')
         with Session(engine) as db:
             content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
@@ -320,7 +320,7 @@ def test_generation_read_failure_is_not_reported_as_provider_failure():
                 id=rulebook_id,
                 game_id=game['id'],
                 pdf_path='rules.pdf',
-                extracted_text_path=str(DATA / 'missing-extracted-text.txt'),
+                extracted_text_path=str(DATA / 'uploads' / 'missing-extracted-text.txt'),
             ))
             db.commit()
 
@@ -335,7 +335,7 @@ def test_generation_read_failure_is_not_reported_as_provider_failure():
 def test_successful_generation_saves_the_paired_draft(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Generated draft'}).json()
-        extracted = DATA / 'generated-draft.txt'
+        extracted = DATA / 'uploads' / 'generated-draft.txt'
         extracted.write_text('rules', encoding='utf-8')
         rulebook_id = str(uuid4())
         with Session(engine) as db:
@@ -365,7 +365,7 @@ def test_successful_generation_saves_the_paired_draft(monkeypatch):
 def test_provider_error_message_is_persisted_and_published_content_survives(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Anthropic model failure'}).json()
-        extracted = DATA / 'anthropic-model-failure.txt'
+        extracted = DATA / 'uploads' / 'anthropic-model-failure.txt'
         extracted.write_text('rules', encoding='utf-8')
         rulebook_id = str(uuid4())
         with Session(engine) as db:
@@ -1085,6 +1085,184 @@ def test_extraction_persists_absolute_text_path(monkeypatch):
             assert content.pipeline_state == PipelineState.ready_to_generate
 
 
+def test_low_quality_extraction_warns_and_requires_server_override(monkeypatch):
+    with TestClient(app) as client:
+        generation_calls = []
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: generation_calls.append(args))
+        game = client.post('/api/games', json={'title': 'Low quality extraction'}).json()
+        uploaded = client.post(
+            f"/api/games/{game['id']}/rulebook",
+            files={'file': ('rules.pdf', PDF, 'application/pdf')},
+        )
+        rulebook_id = uploaded.json()['rulebook']['id']
+        run_extraction(game['id'], rulebook_id)
+
+        current = client.get(f"/api/games/{game['id']}")
+        assert current.status_code == 200
+        body = current.json()
+        assert body['pipeline_state'] == 'ready_to_generate'
+        assert body['extraction_warning'].startswith('Rulebook text extraction is below')
+        assert body['error_message'] is None
+        assert 'pdf_path' not in body['rulebook']
+        assert 'extracted_text_path' not in body['rulebook']
+
+        with Session(engine) as db:
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='test-ciphertext'))
+            db.commit()
+        blocked = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert blocked.status_code == 422
+        assert 'allow_low_quality' in blocked.json()['detail']
+        assert generation_calls == []
+        allowed = client.post(
+            f"/api/games/{game['id']}/generate",
+            json={'confirm': True, 'allow_low_quality': True},
+        )
+        assert allowed.status_code == 200
+        assert generation_calls == [(game['id'], rulebook_id)]
+
+
+def test_high_quality_extraction_allows_generation_without_override(monkeypatch):
+    with TestClient(app) as client:
+        monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *_args: None)
+        game = client.post('/api/games', json={'title': 'High quality extraction'}).json()
+        uploaded = client.post(
+            f"/api/games/{game['id']}/rulebook",
+            files={'file': ('rules.pdf', PDF, 'application/pdf')},
+        )
+        rulebook_id = uploaded.json()['rulebook']['id']
+        run_extraction(game['id'], rulebook_id)
+
+        with Session(engine) as db:
+            rulebook = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            Path(rulebook.extracted_text_path).write_text(' '.join(['rule'] * 500), encoding='utf-8')
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.error_message = None
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='test-ciphertext'))
+            db.commit()
+
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert response.status_code == 200
+        assert response.json()['pipeline_state'] == 'generating'
+        assert response.json()['extraction_warning'] is None
+
+
+def test_startup_recovery_clears_interrupted_extraction_cache():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Interrupted extraction'}).json()
+        with Session(engine) as db:
+            rulebook = Rulebook(
+                id=str(uuid4()),
+                game_id=game['id'],
+                pdf_path=str(DATA / 'uploads' / 'rulebooks' / 'interrupted.pdf'),
+            )
+            Path(rulebook.pdf_path).parent.mkdir(parents=True, exist_ok=True)
+            extracted = Path(rulebook.pdf_path).with_suffix('.txt').resolve()
+            extracted.write_text('orphaned text', encoding='utf-8')
+            partial = extracted.with_name(f'.{extracted.name}.crash.part')
+            partial.write_text('partial', encoding='utf-8')
+            rulebook.extracted_text_path = str(extracted)
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.extracting
+            content.prior_pipeline_state = PipelineState.no_rulebook
+            db.add(rulebook)
+            db.add(content)
+            db.commit()
+
+        from backend.db.init import initialize_database
+        initialize_database()
+        with Session(engine) as db:
+            rulebook = db.exec(select(Rulebook).where(Rulebook.game_id == game['id'])).one()
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert rulebook.extracted_text_path is None
+            assert content.pipeline_state == PipelineState.no_rulebook
+            assert 'interrupted' in content.error_message.lower()
+        assert not extracted.exists()
+        assert not partial.exists()
+
+
+def test_startup_recovery_retries_cleanup_after_filesystem_failure(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Retry interrupted cleanup'}).json()
+        with Session(engine) as db:
+            rulebook = Rulebook(
+                id=str(uuid4()),
+                game_id=game['id'],
+                pdf_path=str(DATA / 'uploads' / 'rulebooks' / 'retry.pdf'),
+            )
+            Path(rulebook.pdf_path).parent.mkdir(parents=True, exist_ok=True)
+            extracted = Path(rulebook.pdf_path).with_suffix('.txt').resolve()
+            extracted.write_text('orphaned text', encoding='utf-8')
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.extracting
+            content.prior_pipeline_state = PipelineState.no_rulebook
+            db.add(rulebook)
+            db.add(content)
+            db.commit()
+
+        original_unlink = Path.unlink
+        failed = False
+
+        def fail_once(path: Path, *args, **kwargs):
+            nonlocal failed
+            if path == extracted and not failed:
+                failed = True
+                raise OSError('simulated cleanup failure')
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'unlink', fail_once)
+        from backend.db.init import initialize_database
+        initialize_database()
+        with Session(engine) as db:
+            assert db.exec(select(Content).where(Content.game_id == game['id'])).one().pipeline_state == PipelineState.extracting
+        monkeypatch.setattr(Path, 'unlink', original_unlink)
+        initialize_database()
+        with Session(engine) as db:
+            assert db.exec(select(Content).where(Content.game_id == game['id'])).one().pipeline_state == PipelineState.no_rulebook
+        assert not extracted.exists()
+
+
+def test_startup_recovery_cleans_orphans_without_rulebook():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Orphan cleanup'}).json()
+        game_root = DATA / 'uploads' / 'rulebooks' / game['id']
+        game_root.mkdir(parents=True, exist_ok=True)
+        extracted = game_root / 'orphan.txt'
+        partial = game_root / '.orphan.txt.crash.part'
+        extracted.write_text('orphaned text', encoding='utf-8')
+        partial.write_text('partial', encoding='utf-8')
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.extracting
+            content.prior_pipeline_state = PipelineState.no_rulebook
+            db.add(content)
+            db.commit()
+
+        from backend.db.init import initialize_database
+        initialize_database()
+        with Session(engine) as db:
+            assert db.exec(select(Content).where(Content.game_id == game['id'])).one().pipeline_state == PipelineState.no_rulebook
+        assert not extracted.exists()
+        assert not partial.exists()
+
+
+def test_generation_rejects_extracted_path_outside_uploads_dataset():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Unsafe extraction path'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.ready_to_generate
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='rules.pdf', extracted_text_path=str(DATA / 'outside.txt')))
+            db.commit()
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert response.status_code == 422
+        assert 'extraction' in response.json()['detail'].lower()
+
+
 def test_rulebook_filesystem_failure_keeps_previous_state(monkeypatch):
     with TestClient(app, raise_server_exceptions=False) as client:
         monkeypatch.setattr('backend.routers.games.run_extraction', lambda *_args: None)
@@ -1290,7 +1468,7 @@ def test_stale_generation_worker_ignores_replaced_rulebook():
             content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
             content.pipeline_state = PipelineState.generating
             content.prior_pipeline_state = PipelineState.ready_to_generate
-            stale_rulebook = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/stale-generate.pdf', extracted_text_path='tests/.data/stale.txt')
+            stale_rulebook = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/uploads/stale-generate.pdf', extracted_text_path='tests/.data/uploads/stale.txt')
             db.add(stale_rulebook)
             db.add(content)
             db.commit()
@@ -1299,7 +1477,7 @@ def test_stale_generation_worker_ignores_replaced_rulebook():
             stale_rulebook = db.get(Rulebook, stale_id)
             db.delete(stale_rulebook)
             db.commit()
-            replacement = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/replacement-generate.pdf', extracted_text_path='tests/.data/generated.txt')
+            replacement = Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='tests/.data/uploads/replacement-generate.pdf', extracted_text_path='tests/.data/uploads/generated.txt')
             db.add(replacement)
             db.commit()
         import asyncio
