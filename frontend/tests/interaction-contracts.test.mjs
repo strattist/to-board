@@ -6,7 +6,7 @@ import { createDeleteController } from '../src/lib/delete-flow.ts';
 import { createGameWithCover, deleteGame, generateContent, getPreview, getSettings, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
 import { createSettingsController } from '../src/lib/settings-flow.ts';
-import { canGenerate, shouldAllowLowQuality } from '../src/lib/generation-flow.js';
+import { canGenerate, confirmGeneration, generationConfirmation, shouldAllowLowQuality } from '../src/lib/generation-flow.js';
 import { hasBusyPipeline } from '../src/lib/polling.js';
 
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
@@ -23,10 +23,12 @@ assert.match(detailSource, /createDeleteController/);
 assert.match(detailSource, /modal button:focus-visible/);
 assert.match(detailSource, /event\.key !== 'Tab'/);
 assert.match(detailSource, /startSession\(game\.id\)/);
-assert.match(detailSource, /generateContent\(game\.id\)/);
+assert.match(detailSource, /generateContent\(gameId\)/);
 assert.doesNotMatch(detailSource, /getPreview\(game\.id\)/);
 assert.match(detailSource, /disabled={!hasPublishedContent/);
 assert.match(detailSource, /Complete Rulebook extraction before generating Content/);
+assert.match(detailSource, /Upload a Rulebook before generating Content/);
+assert.match(detailSource, /Configure a provider API key in <a href="\/settings" on:click\|preventDefault=\{\(\) => onNavigate\('\/settings'\)\}>Settings<\/a> before generating Content/);
 assert.match(detailSource, /extraction_warning/);
 assert.match(detailSource, /allowLowQuality/);
 assert.match(detailSource, /Acknowledge the extraction warning before generating Content/);
@@ -34,6 +36,40 @@ assert.match(detailSource, /role="alert" aria-live="assertive"/);
 assert.match(detailSource, /onRefresh\(true\)/);
 assert.match(detailSource, /aria-busy=\{sessionBusy\}/);
 assert.match(detailSource, /Published Content is required before starting a session or opening Preview/);
+const startGameSessionHandler = detailSource.match(/async function startGameSession\(\) \{([\s\S]*?)\n  \}\n\n  async function openPreview/);
+assert.ok(startGameSessionHandler, 'startGameSession handler should exist');
+assert.match(startGameSessionHandler[1], /if \(!hasPublishedContent \|\| sessionBusy\) return;/);
+assert.doesNotMatch(startGameSessionHandler[1], /extractionBusy/);
+const openPreviewHandler = detailSource.match(/async function openPreview\(\) \{([\s\S]*?)\n  \}\n\n  async function generate/);
+assert.ok(openPreviewHandler, 'openPreview handler should exist');
+assert.match(openPreviewHandler[1], /if \(!hasPublishedContent\) return;/);
+assert.doesNotMatch(openPreviewHandler[1], /extractionBusy/);
+assert.match(detailSource, /disabled=\{!hasPublishedContent \|\| sessionBusy\}/);
+assert.match(detailSource, /disabled=\{!hasPublishedContent\} on:click=\{openPreview\}/);
+assert.match(detailSource, /\$: hasDraftContent = !!game\?\.has_draft_content;/);
+assert.match(detailSource, /\$: providerConfigured = game\?\.provider_configured === true;/);
+const generationEnabledMapping = detailSource.match(/\$: generationEnabled = canGenerate\(\{([^}]*)\}\);/);
+assert.ok(generationEnabledMapping, 'generationEnabled should use canGenerate');
+assert.match(generationEnabledMapping[1], /providerConfigured/);
+assert.doesNotMatch(generationEnabledMapping[1], /generationConfirmBusy/);
+assert.match(detailSource, /let generationConfirmBusy = false;/);
+assert.match(detailSource, /disabled=\{!generationEnabled \|\| generationConfirmBusy\}/);
+assert.match(detailSource, /aria-busy=\{generateBusy \|\| generationConfirmBusy\}/);
+const generateHandler = detailSource.match(/async function generate\(\) \{([\s\S]*?)\n  \}\n\n  async function uploadRulebook/);
+assert.ok(generateHandler, 'generate handler should exist');
+assert.match(generateHandler[1], /if \(!generationEnabled \|\| generationConfirmBusy\) return;/);
+assert.match(generateHandler[1], /const refreshed = await onRefresh\(true\)/);
+assert.match(generateHandler[1], /if \(refreshed !== true\) throw new Error\('The game state could not be refreshed\.'\)/);
+assert.match(generateHandler[1], /await tick\(\)/);
+assert.match(generateHandler[1], /if \(game\?\.id !== gameId \|\| !generationEnabled\)/);
+assert.doesNotMatch(generateHandler[1].match(/if \(game\?\.id !== gameId \|\| !generationEnabled\)/)?.[0] || '', /generationConfirmBusy/);
+assert.match(generateHandler[1], /await confirmGeneration\(\{ hasDraftContent, hasPublishedContent, pipelineState: game\?\.pipeline_state \}/);
+assert.ok(generateHandler[1].indexOf('await confirmGeneration(') < generateHandler[1].indexOf('await generateContent('));
+assert.match(generateHandler[1], /catch \(error\) \{\s*actionError = errorMessage\(error, 'The game state could not be refreshed\.'/);
+assert.doesNotMatch(detailSource, /hasPublishedContent \|\| extractionBusy/);
+assert.doesNotMatch(detailSource, /disabled=\{!hasPublishedContent \|\| extractionBusy/);
+assert.match(readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8'), /provider_configured:boolean/);
+assert.doesNotMatch(readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8'), /cover_image_path/);
 assert.match(appSource, /sidebar-collapsed/);
 assert.match(appSource, /metaKey\|\|e\.ctrlKey/);
 assert.match(appSource, /e\.key==='Escape'/);
@@ -65,10 +101,50 @@ assert.match(settingsSource, /key = ''/);
 assert.match(readFileSync(new URL('../src/components/StatusBadge.svelte', import.meta.url), 'utf8'), /warning-badge/);
 assert.doesNotMatch(settingsSource, /fetch\(/);
 
-assert.equal(canGenerate({ hasExtractedText: true, extractionWarning: 'Review', allowLowQuality: false, extractionBusy: false, uploadBusy: false, generateBusy: false }), false);
-assert.equal(canGenerate({ hasExtractedText: true, extractionWarning: 'Review', allowLowQuality: true, extractionBusy: false, uploadBusy: false, generateBusy: false }), true);
+const generationPrerequisites = {
+  hasRulebook: true,
+  hasExtractedText: true,
+  providerConfigured: true,
+  extractionWarning: 'Review',
+  allowLowQuality: false,
+  extractionBusy: false,
+  uploadBusy: false,
+  generateBusy: false,
+};
+assert.equal(canGenerate(generationPrerequisites), false);
+assert.equal(canGenerate({ ...generationPrerequisites, allowLowQuality: true }), true);
+assert.equal(canGenerate({ ...generationPrerequisites, hasRulebook: false, allowLowQuality: true }), false);
+assert.equal(canGenerate({ ...generationPrerequisites, hasExtractedText: false, allowLowQuality: true }), false);
+assert.equal(canGenerate({ ...generationPrerequisites, providerConfigured: false, allowLowQuality: true }), false);
 assert.equal(shouldAllowLowQuality('Review', true), true);
 assert.equal(shouldAllowLowQuality('Review', false), false);
+
+let generationRequests = 0;
+let draftConfirmation = '';
+const existingDraftState = { hasDraftContent: true, hasPublishedContent: false, pipelineState: 'draft' };
+draftConfirmation = generationConfirmation(existingDraftState);
+assert.match(draftConfirmation, /configured cloud provider/);
+assert.match(draftConfirmation, /existing Draft will be replaced/);
+const canceledGeneration = await confirmGeneration(existingDraftState, (message) => {
+  draftConfirmation = message;
+  return false;
+}, async () => { generationRequests += 1; });
+assert.equal(canceledGeneration, false);
+assert.equal(generationRequests, 0);
+const corruptDraftState = { hasDraftContent: false, hasPublishedContent: true, pipelineState: 'draft' };
+assert.match(generationConfirmation(corruptDraftState), /existing Draft will be replaced/);
+const publishedOnlyState = { hasDraftContent: false, hasPublishedContent: true, pipelineState: 'published' };
+const publishedConfirmation = generationConfirmation(publishedOnlyState);
+assert.match(publishedConfirmation, /configured cloud provider/);
+assert.match(publishedConfirmation, /Published pair will remain available while a new Draft is generated/);
+const genericConfirmation = generationConfirmation({ hasDraftContent: false, hasPublishedContent: false, pipelineState: 'ready_to_generate' });
+assert.match(genericConfirmation, /configured cloud provider/);
+const confirmedGeneration = await confirmGeneration(existingDraftState, (message) => {
+  draftConfirmation = message;
+  return true;
+}, async () => { generationRequests += 1; });
+assert.equal(confirmedGeneration, true);
+assert.equal(generationRequests, 1);
 assert.equal(hasBusyPipeline([{ id: 'other', pipeline_state: 'extracting' }]), true);
 assert.equal(hasBusyPipeline([{ id: 'other', pipeline_state: 'ready_to_generate' }]), false);
 

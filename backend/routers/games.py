@@ -33,6 +33,7 @@ class GenerationRequest(BaseModel):
 def payload(session: Session, game: Game) -> dict:
     rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game.id)).first()
     content = get_or_create(session, game.id)
+    settings = session.get(AppSettings, 1)
     created_at = game.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
@@ -65,7 +66,7 @@ def payload(session: Session, game: Game) -> dict:
     current_warning = persisted_warning if has_extracted_text else None
     fatal_error = cache_error or (None if persisted_warning else content.error_message)
     return {
-        'id': game.id, 'title': game.title, 'cover_image_path': game.cover_image_path,
+        'id': game.id, 'title': game.title,
         'cover_url': cover_url,
         'room_slug_prefix': game.room_slug_prefix, 'created_at': created_at,
         'rulebook': {'id': rulebook.id, 'uploaded_at': rulebook.uploaded_at, 'has_extracted_text': has_extracted_text} if rulebook else None,
@@ -75,6 +76,7 @@ def payload(session: Session, game: Game) -> dict:
         'extraction_warning': current_warning,
         'has_published_content': bool(content.published_quickstart_md and content.published_cheat_sheet_md),
         'has_draft_content': bool(content.draft_quickstart_md and content.draft_cheat_sheet_md),
+        'provider_configured': bool(settings and settings.api_key_encrypted),
     }
 
 @router.get('')

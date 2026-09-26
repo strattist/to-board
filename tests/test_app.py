@@ -64,12 +64,22 @@ def encoded_image(format_name: str) -> bytes:
     return output.getvalue()
 
 
+def stored_cover_path(game_id: str) -> Path:
+    with Session(engine) as db:
+        game = db.get(Game, game_id)
+        assert game is not None and game.cover_image_path is not None
+        return Path(game.cover_image_path)
+
+
 def test_game_creation_and_validation():
     with TestClient(app) as client:
         response = client.post('/api/games', json={'title': '  Wingspan  '})
         assert response.status_code == 201
         assert response.json()['title'] == 'Wingspan'
         assert response.json()['pipeline_state'] == 'no_rulebook'
+        assert response.json()['provider_configured'] is False
+        assert 'cover_image_path' not in response.json()
+        assert 'api_key' not in response.json()
         assert client.post('/api/games', json={'title': '   '}).status_code == 422
 
 
@@ -84,7 +94,8 @@ def test_game_creation_with_cover_is_atomic():
         assert created.status_code == 201
         game = created.json()
         assert game['title'] == 'Atomic cover'
-        assert Path(game['cover_image_path']).read_bytes() == image
+        assert 'cover_image_path' not in game
+        assert stored_cover_path(game['id']).read_bytes() == image
 
         too_long = client.post(
             '/api/games/with-cover',
@@ -126,7 +137,8 @@ def test_collection_metadata_and_cover_validation():
         )
         assert uploaded.status_code == 200
         cover = uploaded.json()
-        cover_path = Path(cover['cover_image_path'])
+        assert 'cover_image_path' not in cover
+        cover_path = stored_cover_path(game['id'])
         assert cover_path.is_file()
         assert cover_path.read_bytes() == png
         assert cover['cover_url'].startswith(f"/api/games/{game['id']}/cover/file?v=")
@@ -175,7 +187,7 @@ def test_collection_metadata_and_cover_validation():
                 files={'file': (filename, image, 'image/*')},
             )
             assert replacement.status_code == 200
-            assert Path(replacement.json()['cover_image_path']).read_bytes() == image
+            assert stored_cover_path(game['id']).read_bytes() == image
 
 
 def test_game_management_requires_host():
@@ -199,12 +211,57 @@ def test_game_management_requires_host():
             settings.auth_disabled = previous
 
 
-def test_generation_requires_prerequisites():
+def test_generation_requires_prerequisites(monkeypatch):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Generation prerequisites'}).json()
+        scheduled = []
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: scheduled.append(args))
         response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
         assert response.status_code == 422
         assert 'extraction' in response.json()['detail'].lower()
+        assert scheduled == []
+
+
+def test_generation_without_provider_key_is_rejected_before_scheduling(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Missing generation key'}).json()
+        extracted = DATA / 'uploads' / 'missing-generation-key.txt'
+        extracted.write_text('completed extracted rules', encoding='utf-8')
+        with Session(engine) as db:
+            db.add(Rulebook(
+                id=str(uuid4()),
+                game_id=game['id'],
+                pdf_path='rules.pdf',
+                extracted_text_path=str(extracted),
+            ))
+            db.commit()
+
+        scheduled = []
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: scheduled.append(args))
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert response.status_code == 422
+        assert 'API key is missing' in response.json()['detail']
+        assert scheduled == []
+        detail = client.get(f"/api/games/{game['id']}").json()
+        assert detail['provider_configured'] is False
+        assert detail['pipeline_state'] == 'no_rulebook'
+        assert 'cover_image_path' not in detail
+        assert 'api_key' not in detail
+
+
+def test_generation_with_incomplete_extraction_is_rejected_before_scheduling(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Incomplete extraction'}).json()
+        with Session(engine) as db:
+            db.add(Rulebook(id=str(uuid4()), game_id=game['id'], pdf_path='rules.pdf'))
+            db.commit()
+
+        scheduled = []
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: scheduled.append(args))
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert response.status_code == 422
+        assert 'extraction is not complete' in response.json()['detail'].lower()
+        assert scheduled == []
 
 
 def test_settings_are_host_protected_encrypted_and_content_preserving():
@@ -236,6 +293,10 @@ def test_settings_are_host_protected_encrypted_and_content_preserving():
             assert content.draft_cheat_sheet_md == '- Draft rule'
 
         assert client.get('/api/settings').json() == {'provider': 'google', 'configured': True}
+        game_detail = client.get(f"/api/games/{game['id']}")
+        assert game_detail.json()['provider_configured'] is True
+        assert game_detail.json()['has_draft_content'] is True
+        assert 'google-secret' not in game_detail.text
         assert client.put('/api/settings', json={'provider': 'openai', 'api_key': 'secret'}).status_code == 422
         malformed = client.put('/api/settings', json={'api_key': 'malformed-secret'})
         assert malformed.status_code == 422
@@ -360,6 +421,87 @@ def test_successful_generation_saves_the_paired_draft(monkeypatch):
             assert content.draft_cheat_sheet_md == '- Rule'
             assert content.published_quickstart_md is None
             assert content.published_cheat_sheet_md is None
+            assert len(db.exec(select(Content).where(Content.game_id == game['id'])).all()) == 1
+
+
+def test_successful_regeneration_preserves_published_pair(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Regenerated draft'}).json()
+        extracted = DATA / 'uploads' / 'regenerated-draft.txt'
+        extracted.write_text('rules', encoding='utf-8')
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Existing published guide'
+            content.published_cheat_sheet_md = '- Existing published rule'
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(id=rulebook_id, game_id=game['id'], pdf_path='rules.pdf', extracted_text_path=str(extracted)))
+            db.commit()
+
+        async def successful_provider(*_args):
+            return '# New draft', '- New rule'
+
+        monkeypatch.setattr('backend.workers.generation.generate_content', successful_provider)
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.draft
+            assert content.draft_quickstart_md == '# New draft'
+            assert content.draft_cheat_sheet_md == '- New rule'
+            assert content.published_quickstart_md == '# Existing published guide'
+            assert content.published_cheat_sheet_md == '- Existing published rule'
+
+
+def test_generate_route_provider_failure_restores_published_predecessor_and_pair(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Published regeneration route'}).json()
+        extracted = DATA / 'uploads' / 'published-regeneration-route.txt'
+        extracted.write_text(' '.join(['rule'] * 500), encoding='utf-8')
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Published guide'
+            content.published_cheat_sheet_md = '- Published rule'
+            db.add(content)
+            db.add(AppSettings(id=1, llm_provider='anthropic', api_key_encrypted='ciphertext'))
+            db.add(Rulebook(
+                id=rulebook_id,
+                game_id=game['id'],
+                pdf_path='rules.pdf',
+                extracted_text_path=str(extracted),
+            ))
+            db.commit()
+
+        scheduled = []
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: scheduled.append(args))
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+
+        assert response.status_code == 200
+        assert response.json()['pipeline_state'] == 'generating'
+        assert scheduled == [(game['id'], rulebook_id)]
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.generating
+            assert content.published_quickstart_md == '# Published guide'
+            assert content.published_cheat_sheet_md == '- Published rule'
+
+        async def fail_with_provider_error(*_args):
+            raise ProviderError('anthropic', 'model_not_found')
+
+        monkeypatch.setattr('backend.workers.generation.generate_content', fail_with_provider_error)
+        asyncio.run(run_generation(game['id'], rulebook_id))
+
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.published
+            assert content.error_message == 'Anthropic model was not found or is unavailable.'
+            assert content.published_quickstart_md == '# Published guide'
+            assert content.published_cheat_sheet_md == '- Published rule'
 
 
 def test_provider_error_message_is_persisted_and_published_content_survives(monkeypatch):
@@ -603,12 +745,18 @@ def test_publish_and_reject_are_atomic_and_preserve_published_content():
             assert content.published_quickstart_md == '# Published'
 
 
-def test_session_room_and_close_state():
+@pytest.mark.parametrize(
+    'busy_pipeline_state',
+    [PipelineState.extracting, PipelineState.generating],
+    ids=['extracting', 'generating'],
+)
+def test_session_room_and_close_state(busy_pipeline_state):
     with TestClient(app) as client:
         game = client.post('/api/games', json={'title': 'Session test'}).json()
         with Session(engine) as db:
             content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
-            content.pipeline_state = PipelineState.published
+            content.pipeline_state = busy_pipeline_state
+            content.prior_pipeline_state = PipelineState.published
             content.published_quickstart_md = '# Start'
             content.published_cheat_sheet_md = '- Rule'
             db.add(content)
@@ -616,9 +764,49 @@ def test_session_room_and_close_state():
         created = client.post(f"/api/sessions?game_id={game['id']}")
         assert created.status_code == 201
         record = created.json()
+        preview = client.get(f"/api/games/{game['id']}/preview")
+        assert preview.status_code == 200
+        assert preview.json()['quickstart_md'] == '# Start'
         assert client.get('/api/room/' + record['room_slug']).json()['quickstart_md'] == '# Start'
         assert client.post('/api/sessions/' + record['id'] + '/end').status_code == 200
         assert client.get('/api/room/' + record['room_slug']).json()['ended'] is True
+
+
+@pytest.mark.parametrize(
+    ('quickstart_md', 'cheat_sheet_md'),
+    [('# Published guide', None), (None, '- Published rule')],
+    ids=['missing-quickstart', 'missing-cheat-sheet'],
+)
+def test_session_requires_complete_published_pair_during_generation(quickstart_md, cheat_sheet_md):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Incomplete published pair'}).json()
+        room_slug = f"incomplete-published-{game['id'][:8]}"
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = quickstart_md
+            content.published_cheat_sheet_md = cheat_sheet_md
+            db.add_all([
+                content,
+                GameSession(
+                    id=str(uuid4()),
+                    game_id=game['id'],
+                    game_title_snapshot=game['title'],
+                    room_slug=room_slug,
+                ),
+            ])
+            db.commit()
+
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        assert response.status_code == 422
+        assert response.json()['detail'] == 'Published Content is required to start a Session.'
+        preview = client.get(f"/api/games/{game['id']}/preview")
+        assert preview.status_code == 404
+        assert preview.json()['detail'] == 'Published Content not found.'
+        room = client.get(f"/api/room/{room_slug}")
+        assert room.status_code == 404
+        assert room.json()['detail'] == 'Published Content is unavailable for this Room.'
 
 
 def test_game_deletion_removes_current_assets_and_preserves_session_history(monkeypatch):
@@ -649,7 +837,7 @@ def test_game_deletion_removes_current_assets_and_preserves_session_history(monk
             )
             db.add_all([rulebook, content, history])
             db.commit()
-            cover_path = Path(cover['cover_image_path'])
+            cover_path = stored_cover_path(game['id'])
             history_id = history.id
 
         response = client.delete(f"/api/games/{game['id']}")
@@ -696,7 +884,7 @@ def test_game_deletion_storage_failure_restores_assets_and_rows(monkeypatch):
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         original_replace = Path.replace
 
         def fail_staging(path: Path, destination: Path):
@@ -720,7 +908,7 @@ def test_game_deletion_partial_staging_failure_restores_all_assets(monkeypatch):
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         with Session(engine) as db:
             rulebook_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.pdf'
             rulebook_path.parent.mkdir(parents=True, exist_ok=True)
@@ -754,7 +942,7 @@ def test_game_deletion_post_commit_cleanup_is_journaled_and_retried(monkeypatch)
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         original_remove = games_service._remove_path
 
         def fail_tombstone_unlink(path: Path):
@@ -803,7 +991,7 @@ def test_game_deletion_database_failure_restores_assets_and_rows(monkeypatch):
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         original_commit = Session.commit
 
         def fail_commit(self):
@@ -826,7 +1014,7 @@ def test_game_deletion_database_failure_restores_all_assets(monkeypatch):
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         with Session(engine) as db:
             rulebook_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.pdf'
             extracted_path = DATA / 'uploads' / 'rulebooks' / game['id'] / 'rules.txt'
@@ -859,7 +1047,7 @@ def test_game_deletion_recovery_journal_replays_failed_restore(monkeypatch):
             f"/api/games/{game['id']}/cover",
             files={'file': ('cover.png', encoded_image('PNG'), 'image/png')},
         ).json()
-        cover_path = Path(cover['cover_image_path'])
+        cover_path = stored_cover_path(game['id'])
         original_replace = Path.replace
         original_commit = Session.commit
 
@@ -922,7 +1110,8 @@ def test_missing_cover_file_returns_not_found():
         )
         uploaded = client.post(f"/api/games/{game['id']}/cover", files={'file': ('cover.png', image, 'image/png')})
         assert uploaded.status_code == 200
-        Path(uploaded.json()['cover_image_path']).unlink()
+        original_cover_path = stored_cover_path(game['id'])
+        original_cover_path.unlink()
         assert client.get(uploaded.json()['cover_url']).status_code == 404
 
 
@@ -934,6 +1123,7 @@ def test_cover_filesystem_failure_restores_previous_cover(monkeypatch):
         )
         uploaded = client.post(f"/api/games/{game['id']}/cover", files={'file': ('cover.png', original, 'image/png')})
         assert uploaded.status_code == 200
+        original_cover_path = stored_cover_path(game['id'])
         original_replace = Path.replace
 
         def fail_temporary_replace(path: Path, destination: Path):
@@ -944,10 +1134,10 @@ def test_cover_filesystem_failure_restores_previous_cover(monkeypatch):
         monkeypatch.setattr(Path, 'replace', fail_temporary_replace)
         failed = client.post(f"/api/games/{game['id']}/cover", files={'file': ('replacement.jpg', encoded_image('JPEG'), 'image/jpeg')})
         assert failed.status_code == 500
-        assert Path(uploaded.json()['cover_image_path']).read_bytes() == original
+        assert original_cover_path.read_bytes() == original
         restored = client.get(f"/api/games/{game['id']}")
         assert restored.status_code == 200
-        assert restored.json()['cover_image_path'] == uploaded.json()['cover_image_path']
+        assert stored_cover_path(game['id']) == original_cover_path
         assert client.get(restored.json()['cover_url']).content == original
 
 PDF = b'%PDF-1.4\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n4 0 obj<< /Length 44 >>stream\nBT /F1 12 Tf 72 720 Td (Rulebook text) Tj ET\nendstream endobj\n5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\ntrailer<< /Root 1 0 R >>\n%%EOF'
@@ -1181,6 +1371,45 @@ def test_startup_recovery_clears_interrupted_extraction_cache():
             assert 'interrupted' in content.error_message.lower()
         assert not extracted.exists()
         assert not partial.exists()
+
+
+def test_startup_recovery_restores_interrupted_generation_predecessor_and_allows_retry(monkeypatch):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Interrupted generation'}).json()
+        extracted = DATA / 'uploads' / 'interrupted-generation.txt'
+        extracted.write_text(' '.join(['rule'] * 500), encoding='utf-8')
+        rulebook_id = str(uuid4())
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Published guide'
+            content.published_cheat_sheet_md = '- Published rule'
+            db.add(Rulebook(
+                id=rulebook_id,
+                game_id=game['id'],
+                pdf_path='rules.pdf',
+                extracted_text_path=str(extracted),
+            ))
+            db.add(AppSettings(id=1, llm_provider='google', api_key_encrypted='ciphertext'))
+            db.add(content)
+            db.commit()
+
+        from backend.db.init import initialize_database
+        initialize_database()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.published
+            assert content.published_quickstart_md == '# Published guide'
+            assert content.published_cheat_sheet_md == '- Published rule'
+            assert 'interrupted' in content.error_message.lower()
+
+        scheduled = []
+        monkeypatch.setattr('backend.routers.games.run_generation', lambda *args: scheduled.append(args))
+        retried = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert retried.status_code == 200
+        assert retried.json()['pipeline_state'] == 'generating'
+        assert scheduled == [(game['id'], rulebook_id)]
 
 
 def test_startup_recovery_retries_cleanup_after_filesystem_failure(monkeypatch):
