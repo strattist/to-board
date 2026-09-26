@@ -235,7 +235,7 @@
   <section class="page" aria-labelledby="game-title">
     <a href="/" on:click|preventDefault={() => onNavigate('/')}>← Collection</a>
     <div class="head">
-      <div><h1 id="game-title">{game.title}</h1><StatusBadge state={game.pipeline_state} warning={extractionWarning}/></div>
+      <div><h1 id="game-title" tabindex="-1">{game.title}</h1><StatusBadge state={game.pipeline_state} warning={extractionWarning}/></div>
       <div class="actions">
         <button class="primary" disabled={!hasPublishedContent || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
         <button class="button" disabled={!hasPublishedContent} on:click={openPreview}>Preview</button>

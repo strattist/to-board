@@ -78,5 +78,19 @@
 </a>
 
 <style>
-    .card{position:relative;display:block;aspect-ratio:2/3;background:#1e1c27;border-radius:20px;overflow:hidden;text-decoration:none;color:#edecee;min-width:0;touch-action:manipulation}.cover{position:absolute;inset:0;display:grid;place-items:center;background:#29263c;font-size:48px;font-weight:600;color:#a277ff55}.cover img{width:100%;height:100%;object-fit:cover}.overlay{position:absolute;inset:0;padding:12px;display:flex;align-items:flex-end;background:linear-gradient(transparent 45%,#15141bee);opacity:1;transition:opacity .2s ease}.overlay strong{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.card :global(.badge){position:absolute;left:10px;bottom:38px}.card :global(.warning-badge){position:absolute;left:10px;bottom:10px}.card:hover .overlay,.card:focus-visible .overlay{background:linear-gradient(transparent 35%,#15141bf2)}.card:focus-visible{outline:2px solid #a277ff;outline-offset:2px}@media(prefers-reduced-motion:reduce){.overlay{transition:none}}
+  .card{position:relative;display:block;aspect-ratio:2/3;background:#1e1c27;border-radius:20px;overflow:hidden;text-decoration:none;color:#edecee;min-width:0;touch-action:manipulation}
+  .cover{position:absolute;inset:0;display:grid;place-items:center;background:#29263c;font-size:48px;font-weight:600;color:#a277ff55;transition:transform .22s ease,filter .22s ease}
+  .cover img{width:100%;height:100%;object-fit:cover}
+  .overlay{position:absolute;inset:0;padding:12px 12px 64px;display:flex;align-items:flex-end;background:linear-gradient(transparent 45%,#15141bee);opacity:1;pointer-events:none;transition:opacity .2s ease,transform .2s ease}
+  .overlay strong{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card :global(.badge){position:absolute;left:10px;bottom:38px}
+  .card :global(.warning-badge){position:absolute;left:10px;bottom:10px}
+  .card:hover .overlay,.card:focus-visible .overlay{background:linear-gradient(transparent 35%,#15141bf2)}
+  .card:focus-visible{outline:2px solid #a277ff;outline-offset:2px}
+  @media (hover: hover) and (pointer: fine){
+    .overlay{opacity:0;transform:translateY(6px)}
+    .card:hover .overlay,.card:focus-visible .overlay{opacity:1;transform:translateY(0)}
+    .card:hover .cover,.card:focus-visible .cover{transform:scale(1.04);filter:brightness(.76)}
+  }
+  @media (prefers-reduced-motion: reduce){.overlay,.cover{transition:none;transform:none}}
 </style>

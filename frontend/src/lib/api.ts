@@ -34,6 +34,22 @@ export const generateContent = (gameId: string, allowLowQuality = false) => api<
   method: 'POST',
   body: JSON.stringify(allowLowQuality ? { confirm: true, allow_low_quality: true } : { confirm: true }),
 });
+export type Content = {
+  game_id: string;
+  pipeline_state: string;
+  draft_quickstart_md: string | null;
+  draft_cheat_sheet_md: string | null;
+  draft_revision: string | null;
+  published_quickstart_md: string | null;
+  published_cheat_sheet_md: string | null;
+};
+export const getContent = (gameId: string) => api<Content>(`/api/games/${gameId}/content`);
+const draftAction = (gameId: string, action: 'publish' | 'reject', expectedRevision: string) => api<{ pipeline_state: string }>(`/api/games/${gameId}/content/${action}`, {
+  method: 'POST',
+  body: JSON.stringify({ expected_revision: expectedRevision }),
+});
+export const publishContent = (gameId: string, expectedRevision: string) => draftAction(gameId, 'publish', expectedRevision);
+export const rejectContent = (gameId: string, expectedRevision: string) => draftAction(gameId, 'reject', expectedRevision);
 export const getPreview = (gameId: string) => api<Preview>(`/api/games/${gameId}/preview`);
 export type Game = { id:string; title:string; pipeline_state:string; error_message?:string|null; extraction_warning?:string|null; has_published_content:boolean; has_draft_content:boolean; provider_configured:boolean; cover_url?:string|null; rulebook?:{id:string;has_extracted_text:boolean}|null; created_at:string };
 export type Room = { ended:boolean; game_title:string; room_slug:string; quickstart_md?:string; cheat_sheet_md?:string };

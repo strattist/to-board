@@ -3,18 +3,143 @@ import { readFileSync } from 'node:fs';
 import { activateLinkOnSpace } from '../src/lib/keyboard.js';
 import { createGameFlow } from '../src/lib/create-flow.js';
 import { createDeleteController } from '../src/lib/delete-flow.ts';
-import { createGameWithCover, deleteGame, generateContent, getPreview, getSettings, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
+import { createGameWithCover, deleteGame, generateContent, getContent, getPreview, getSettings, publishContent, rejectContent, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
 import { createSettingsController } from '../src/lib/settings-flow.ts';
 import { canGenerate, confirmGeneration, generationConfirmation, shouldAllowLowQuality } from '../src/lib/generation-flow.js';
 import { hasBusyPipeline } from '../src/lib/polling.js';
+import { applyReviewResult, canActOnDraft, contentChangeAnnouncement, hasCompleteDraft } from '../src/lib/review-state.ts';
 
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
+const reviewSource = readFileSync(new URL('../src/components/Review.svelte', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const sidebarSource = readFileSync(new URL('../src/components/Sidebar.svelte', import.meta.url), 'utf8');
 const collectionSource = readFileSync(new URL('../src/components/Collection.svelte', import.meta.url), 'utf8');
 const cardSource = readFileSync(new URL('../src/components/GameCard.svelte', import.meta.url), 'utf8');
 const settingsSource = readFileSync(new URL('../src/components/SettingsPage.svelte', import.meta.url), 'utf8');
+const completeDraft = {
+  pipeline_state: 'draft',
+  draft_quickstart_md: '# Guide',
+  draft_cheat_sheet_md: '- Rule',
+  draft_revision: 'revision-one',
+  published_quickstart_md: null,
+  published_cheat_sheet_md: null,
+};
+assert.equal(hasCompleteDraft(completeDraft), true);
+assert.equal(hasCompleteDraft({ ...completeDraft, draft_cheat_sheet_md: ' \n\t' }), false);
+assert.equal(canActOnDraft(completeDraft, '', false, false), true);
+assert.equal(canActOnDraft(completeDraft, 'Network error', false, false), false);
+assert.equal(canActOnDraft(completeDraft, '', true, false), false);
+assert.equal(canActOnDraft(completeDraft, '', false, true), false);
+assert.equal(contentChangeAnnouncement(null, completeDraft), '');
+assert.equal(
+  contentChangeAnnouncement(completeDraft, { ...completeDraft, draft_revision: 'revision-two', draft_quickstart_md: '# Updated' }),
+  'Draft changed. Review both updated documents before taking action.',
+);
+assert.equal(
+  contentChangeAnnouncement({ ...completeDraft, pipeline_state: 'generating' }, completeDraft),
+  'Content state changed to Needs review.',
+);
+assert.equal(contentChangeAnnouncement(completeDraft, completeDraft), '');
+const gameSummaries = [
+  { id: 'game-1', pipeline_state: 'draft', has_draft_content: true, has_published_content: false },
+  { id: 'game-2', pipeline_state: 'draft', has_draft_content: true, has_published_content: true },
+];
+assert.deepEqual(applyReviewResult(gameSummaries, 'game-1', 'published'), [
+  { id: 'game-1', pipeline_state: 'published', has_draft_content: false, has_published_content: true },
+  gameSummaries[1],
+]);
+assert.deepEqual(applyReviewResult(gameSummaries, 'game-2', 'rejected'), [
+  gameSummaries[0],
+  { id: 'game-2', pipeline_state: 'rejected', has_draft_content: false, has_published_content: true },
+]);
+assert.match(cardSource, /\.overlay\{[^}]*opacity:1/);
+assert.match(cardSource, /@media \(hover: hover\) and \(pointer: fine\)\{[\s\S]*?\.overlay\{opacity:0/);
+assert.match(cardSource, /\.card:hover \.overlay,\.card:focus-visible \.overlay\{opacity:1;transform:translateY\(0\)\}/);
+assert.match(cardSource, /\.card:hover \.cover,\.card:focus-visible \.cover\{transform:scale\(1\.04\);filter:brightness\(\.76\)\}/);
+assert.match(cardSource, /padding:12px 12px 64px/);
+assert.match(cardSource, /@media \(prefers-reduced-motion: reduce\)\{\.overlay,\.cover\{transition:none;transform:none\}\}/);
+assert.match(appSource, /segments\[2\]==='review'/);
+assert.match(appSource, /navigationAnnouncement/);
+assert.match(appSource, /getElementById\('game-title'\)\?\.focus\(\)/);
+assert.match(appSource, /applyReviewResult\(games,gameId,result\.pipeline_state\)/);
+assert.match(appSource, /onBack=\{returnFromReview\}/);
+assert.match(detailSource, /games\/\$\{game\.id\}\/review/);
+assert.match(detailSource, /id="game-title" tabindex="-1"/);
+assert.match(reviewSource, /getContent\(gameId\)/);
+assert.match(reviewSource, /on:click\|preventDefault=\{\(\) => onBack\(\)\}/);
+assert.match(reviewSource, /publishContent\(gameId, expectedRevision\)/);
+assert.match(reviewSource, /rejectContent\(gameId, expectedRevision\)/);
+assert.match(reviewSource, /Markdown value=\{content\?\.draft_quickstart_md/);
+assert.match(reviewSource, /Markdown value=\{content\?\.draft_cheat_sheet_md/);
+assert.match(reviewSource, /setInterval\([\s\S]*?5000\)/);
+assert.match(reviewSource, /window\.clearInterval\(timer\)/);
+assert.match(reviewSource, /if \(loadInFlight\)/);
+assert.match(reviewSource, /if \(force\) queuedLoadGameId = gameId/);
+assert.match(reviewSource, /loadContent\(gameId, true\)/);
+assert.match(reviewSource, /loadInFlight = true/);
+assert.match(reviewSource, /role="status" aria-live="polite"/);
+assert.match(reviewSource, /role="alert" aria-live="assertive"/);
+assert.match(reviewSource, /role="dialog" aria-modal="true"/);
+assert.match(reviewSource, /event\.key !== 'Tab'/);
+assert.match(reviewSource, /disabled=\{!!actionBusy\}/);
+assert.match(reviewSource, /Rejection clears this Draft and lets you generate new content\./);
+assert.match(reviewSource, /Any Published content already available to Guests stays unchanged\./);
+assert.match(reviewSource, /on:click=\{cancelRejection\}/);
+assert.match(reviewSource, /contentChangeAnnouncement\(previous, next\)/);
+assert.match(reviewSource, /Last known Content state: \$\{stateLabel\}\./);
+assert.match(reviewSource, /disabled=\{!draftActionable \|\| !!actionBusy\}/);
+assert.match(reviewSource, /Draft changed\. Review both updated documents before taking action\./);
+assert.match(reviewSource, /Updated Draft reviewed\. Publish or Reject is available\./);
+assert.match(reviewSource, /await tick\(\);\s*rejectionTrigger\?\.focus\(\)/);
+assert.match(reviewSource, /disabled=\{!draftActionable \|\| !!actionBusy\}/);
+assert.match(reviewSource, /This Draft changed\. Review both updated documents before taking action\./);
+assert.match(reviewSource, /else if !loading && !loadError/);
+assert.match(reviewSource, /expectedRevision = content\.draft_revision/);
+assert.doesNotMatch(reviewSource, /class="state-change"/);
+assert.match(reviewSource, /\.columns\{grid-template-columns:minmax\(0,1fr\)\}/);
+assert.match(reviewSource, /if \(!draftActionable \|\| actionBusy\) return;/);
+assert.match(reviewSource, /rejectionRetry, rejectionConfirm/);
+assert.match(reviewSource, /if \(loadError\)[\s\S]*?The latest Draft state could not be verified/);
+const cancelRejectionHandler = reviewSource.match(/function cancelRejection\(\) \{([\s\S]*?)\n  \}/);
+assert.ok(cancelRejectionHandler, 'Cancel handler should exist');
+assert.doesNotMatch(cancelRejectionHandler[1], /submitAction|fetch\s*\(|\bapi\s*\(|getContent|publishContent|rejectContent/);
+assert.doesNotMatch(cancelRejectionHandler[1], /content\s*=|pipeline_state/);
+assert.match(cancelRejectionHandler[1], /rejectionDialogOpen = false/);
+assert.match(cancelRejectionHandler[1], /restoreRejectionFocus\(\)/);
+assert.match(reviewSource, /if \(rejectionTrigger\?\.isConnected\) rejectionTrigger\.focus\(\)/);
+const confirmRejectionHandler = reviewSource.match(/async function confirmRejection\(\) \{([\s\S]*?)\n  \}/);
+assert.ok(confirmRejectionHandler, 'Reject confirmation handler should exist');
+assert.match(confirmRejectionHandler[1], /submitAction\('reject'\)/);
+assert.doesNotMatch(confirmRejectionHandler[1], /publishContent|submitAction\('publish'\)/);
+assert.match(reviewSource, /on:focusout=\{handleDialogFocusout\}/);
+assert.match(reviewSource, /function handleDialogFocusout\(event: FocusEvent\)/);
+assert.match(reviewSource, /if \(!focusable\.length \|\| !rejectionDialog\.contains\(current\)\)/);
+const submitActionHandler = reviewSource.match(/async function submitAction\(kind: 'publish' \| 'reject'\) \{([\s\S]*?)\n  \}/);
+assert.ok(submitActionHandler, 'Shared action handler should exist');
+assert.match(submitActionHandler[1], /actionError = messageFrom\(reason/);
+assert.match(submitActionHandler[1], /await loadContent\(gameId, true\)/);
+assert.match(submitActionHandler[1], /expectedRevision/);
+assert.match(reviewSource, /\{#if actionError && !rejectionDialogOpen\}[\s\S]*?role="alert" aria-live="assertive"/);
+assert.match(reviewSource, /\{#if actionError\}<p class="error" role="alert" aria-live="assertive">\{actionError\}/);
+assert.match(submitActionHandler[1], /if \(!mounted \|\| gameId !== id \|\| version !== actionVersion\) return;/);
+assert.match(submitActionHandler[1], /onBack\(\{[\s\S]*?announcement:/);
+assert.match(reviewSource, /class="primary"[\s\S]*?on:click=\{publishDraft\}/);
+const publishDraftHandler = reviewSource.match(/async function publishDraft\(\) \{([\s\S]*?)\n  \}/);
+assert.ok(publishDraftHandler, 'Publish handler should exist');
+assert.match(publishDraftHandler[1], /submitAction\('publish'\)/);
+assert.doesNotMatch(publishDraftHandler[1], /rejectionDialogOpen|confirmRejection/);
+const openRejectionHandler = reviewSource.match(/async function openRejectionDialog\(\) \{([\s\S]*?)\n  \}/);
+assert.ok(openRejectionHandler, 'Reject dialog opener should exist');
+assert.match(openRejectionHandler[1], /rejectionCancel && !rejectionCancel\.disabled\) rejectionCancel\.focus\(\)/);
+assert.match(openRejectionHandler[1], /else rejectionDialog\?\.focus\(\)/);
+assert.match(reviewSource, /<section class="page" aria-labelledby="review-title" inert=\{rejectionDialogOpen\}>/);
+const reviewSectionEnd = reviewSource.indexOf('</section>');
+const rejectionModalStart = reviewSource.indexOf('{#if rejectionDialogOpen}', reviewSectionEnd);
+assert.ok(reviewSectionEnd >= 0 && rejectionModalStart > reviewSectionEnd, 'Rejection modal should sit outside inert review content');
+assert.match(reviewSource, /\.actions\{position:sticky;bottom:0/);
+assert.match(reviewSource, /@media\(max-width:480px\)\{\.actions\{padding:12px 0\}/);
+assert.doesNotMatch(reviewSource.match(/@media\(max-width:480px\)\{([^\n]*)\}/)?.[1] || '', /position:static/);
 assert.match(detailSource, /role="dialog"/);
 assert.match(detailSource, /This action is irreversible/);
 assert.match(detailSource, /on:click={cancelDelete}/);
@@ -213,6 +338,22 @@ assert.deepEqual(JSON.parse(request.options.body), { confirm: true, allow_low_qu
 await getPreview('game-1');
 assert.equal(request.path, '/api/games/game-1/preview');
 assert.equal(request.options.credentials, 'include');
+
+await getContent('game-1');
+assert.equal(request.path, '/api/games/game-1/content');
+assert.equal(request.options.credentials, 'include');
+
+await publishContent('game-1', 'reviewed-revision');
+assert.equal(request.path, '/api/games/game-1/content/publish');
+assert.equal(request.options.method, 'POST');
+assert.equal(request.options.credentials, 'include');
+assert.deepEqual(JSON.parse(request.options.body), { expected_revision: 'reviewed-revision' });
+
+await rejectContent('game-1', 'reviewed-revision');
+assert.equal(request.path, '/api/games/game-1/content/reject');
+assert.equal(request.options.method, 'POST');
+assert.equal(request.options.credentials, 'include');
+assert.deepEqual(JSON.parse(request.options.body), { expected_revision: 'reviewed-revision' });
 
 globalThis.fetch = async (path, options) => {
   request = { path, options };
