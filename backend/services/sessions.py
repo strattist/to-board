@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timezone
 from sqlmodel import Session, select
 from fastapi import HTTPException
-from backend.models import Content, Game, GameSession, PipelineState
+from backend.models import Content, Game, GameSession
 from backend.core.utils import uuid4_str
 
 def make_room_slug(prefix: str, session: Session) -> str:
@@ -15,7 +15,7 @@ def make_room_slug(prefix: str, session: Session) -> str:
     raise HTTPException(status_code=500, detail='Could not allocate a unique Room URL.')
 
 def create_session(session: Session, game: Game, content: Content) -> GameSession:
-    if content.pipeline_state != PipelineState.published or not content.published_quickstart_md or not content.published_cheat_sheet_md:
+    if not content.published_quickstart_md or not content.published_cheat_sheet_md:
         raise HTTPException(status_code=422, detail='Published Content is required to start a Session.')
     active = session.exec(select(GameSession).where(GameSession.game_id == game.id, GameSession.ended_at.is_(None))).first()
     if active:

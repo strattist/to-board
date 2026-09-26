@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-20-2026 21:31
-last_updated: 09-24-2026
+last_updated: 2026-09-26
 project: to-board
 project_key: NOKEY
 tracking_system: file-system
@@ -46,7 +46,7 @@ development_status:
   epic-2: in-progress
   2-1-configure-and-protect-the-llm-provider: done
   2-2-extract-rulebook-text-locally: done
-  2-3-generate-draft-content-from-a-rulebook: backlog
+  2-3-generate-draft-content-from-a-rulebook: review
   2-4-review-reject-and-publish-draft-content: backlog
   2-5-preview-published-content-without-a-session: backlog
   2-6-add-openai-as-a-supported-provider: backlog

@@ -3,7 +3,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import { deleteGame, generateContent, startSession, uploadGameCover, uploadRulebook as uploadRulebookRequest } from '../lib/api';
   import { createDeleteController } from '../lib/delete-flow';
-  import { canGenerate, shouldAllowLowQuality } from '../lib/generation-flow.js';
+  import { canGenerate, confirmGeneration, shouldAllowLowQuality } from '../lib/generation-flow.js';
   import { confirmRulebookReplacement, isPipelineBusy } from '../lib/rulebook-flow.js';
 
   export let game: any;
@@ -16,6 +16,7 @@
   let coverBusy = false;
   let sessionBusy = false;
   let generateBusy = false;
+  let generationConfirmBusy = false;
   let allowLowQuality = false;
   let warningIdentity = '';
   let actionError = '';
@@ -38,14 +39,17 @@
   });
 
   $: extractionBusy = !!game && isPipelineBusy(game.pipeline_state);
+  $: hasRulebook = !!game?.rulebook;
   $: hasExtractedText = !!game?.rulebook?.has_extracted_text;
+  $: providerConfigured = game?.provider_configured === true;
   $: extractionWarning = game?.extraction_warning || '';
   $: nextWarningIdentity = `${game?.id || ''}:${game?.rulebook?.id || ''}:${extractionWarning}`;
   $: if (nextWarningIdentity !== warningIdentity) { allowLowQuality = false; warningIdentity = nextWarningIdentity; }
   $: qualityAcknowledged = !extractionWarning || allowLowQuality;
-  $: generationEnabled = canGenerate({ hasExtractedText, extractionWarning, allowLowQuality, extractionBusy, uploadBusy, generateBusy });
+  $: generationEnabled = canGenerate({ hasRulebook, hasExtractedText, providerConfigured, extractionWarning, allowLowQuality, extractionBusy, uploadBusy, generateBusy });
   $: if (!extractionWarning) allowLowQuality = false;
   $: hasPublishedContent = !!game?.has_published_content;
+  $: hasDraftContent = !!game?.has_draft_content;
   $: pipelineStatus = game?.pipeline_state === 'extracting'
     ? 'Rulebook uploaded. Extracting text…'
     : game?.pipeline_state === 'generating'
@@ -53,8 +57,12 @@
       : '';
   $: generationReason = uploadBusy
     ? 'Finish Rulebook upload before generating Content.'
+    : !hasRulebook
+    ? 'Upload a Rulebook before generating Content.'
     : !hasExtractedText
     ? 'Complete Rulebook extraction before generating Content.'
+    : !providerConfigured
+      ? 'Configure a provider API key in Settings before generating Content.'
     : extractionWarning && !allowLowQuality
       ? 'Acknowledge the extraction warning before generating Content.'
     : extractionBusy
@@ -62,9 +70,7 @@
       : '';
   $: contentActionReason = !hasPublishedContent
     ? 'Published Content is required before starting a session or opening Preview.'
-    : extractionBusy
-      ? 'Preview and sessions are unavailable while the pipeline is busy.'
-      : '';
+    : '';
 
   function errorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
@@ -82,7 +88,7 @@
   }
 
   async function startGameSession() {
-    if (!hasPublishedContent || extractionBusy || sessionBusy) return;
+    if (!hasPublishedContent || sessionBusy) return;
     actionError = '';
     actionStatus = '';
     sessionBusy = true;
@@ -98,26 +104,48 @@
   }
 
   async function openPreview() {
-    if (!hasPublishedContent || extractionBusy) return;
+    if (!hasPublishedContent) return;
     actionError = '';
     actionStatus = '';
     onNavigate(`/games/${game.id}/preview`);
   }
 
   async function generate() {
-    if (!generationEnabled) return;
-    if (!window.confirm('Generate content using the configured cloud provider?')) return;
+    if (!generationEnabled || generationConfirmBusy) return;
+    const gameId = game?.id;
+    if (!gameId) return;
+    generationConfirmBusy = true;
     actionError = '';
     actionStatus = '';
-    generateBusy = true;
     try {
-      if (shouldAllowLowQuality(extractionWarning, allowLowQuality)) await generateContent(game.id, true);
-      else await generateContent(game.id);
-      await refreshAfterAction('Content generation started.');
-    } catch (error) {
-      actionError = errorMessage(error, 'Content generation could not be started.');
+      try {
+        const refreshed = await onRefresh(true);
+        if (refreshed !== true) throw new Error('The game state could not be refreshed.');
+        await tick();
+      } catch (error) {
+        actionError = errorMessage(error, 'The game state could not be refreshed.');
+        return;
+      }
+      if (game?.id !== gameId || !generationEnabled) {
+        actionError = generationReason || 'Generation prerequisites are no longer met.';
+        return;
+      }
+      await confirmGeneration({ hasDraftContent, hasPublishedContent, pipelineState: game?.pipeline_state }, (message) => window.confirm(message), async () => {
+        actionError = '';
+        actionStatus = '';
+        generateBusy = true;
+        try {
+          if (shouldAllowLowQuality(extractionWarning, allowLowQuality)) await generateContent(gameId, true);
+          else await generateContent(gameId);
+          await refreshAfterAction('Content generation started.');
+        } catch (error) {
+          actionError = errorMessage(error, 'Content generation could not be started.');
+        } finally {
+          generateBusy = false;
+        }
+      });
     } finally {
-      generateBusy = false;
+      generationConfirmBusy = false;
     }
   }
 
@@ -209,8 +237,8 @@
     <div class="head">
       <div><h1 id="game-title">{game.title}</h1><StatusBadge state={game.pipeline_state} warning={extractionWarning}/></div>
       <div class="actions">
-        <button class="primary" disabled={!hasPublishedContent || extractionBusy || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
-        <button class="button" disabled={!hasPublishedContent || extractionBusy} on:click={openPreview}>Preview</button>
+        <button class="primary" disabled={!hasPublishedContent || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
+        <button class="button" disabled={!hasPublishedContent} on:click={openPreview}>Preview</button>
       </div>
     </div>
     {#if contentActionReason}<p class="action-note">{contentActionReason}</p>{/if}
@@ -242,8 +270,14 @@
     <div class="panel">
       <h2>Content</h2>
       {#if game.has_draft_content}<a class="button" href={`/games/${game.id}/review`}>Review draft</a>{/if}
-      <button class="primary" disabled={!generationEnabled} aria-busy={generateBusy} on:click={generate}>{generateBusy ? 'Starting…' : 'Generate content'}</button>
-      {#if generationReason}<p class="action-note">{generationReason}</p>{/if}
+      <button class="primary" disabled={!generationEnabled || generationConfirmBusy} aria-busy={generateBusy || generationConfirmBusy} on:click={generate}>{generateBusy ? 'Starting…' : generationConfirmBusy ? 'Checking…' : 'Generate content'}</button>
+      {#if generationReason}
+        {#if !uploadBusy && hasRulebook && hasExtractedText && !providerConfigured}
+          <p class="action-note">Configure a provider API key in <a href="/settings" on:click|preventDefault={() => onNavigate('/settings')}>Settings</a> before generating Content.</p>
+        {:else}
+          <p class="action-note">{generationReason}</p>
+        {/if}
+      {/if}
     </div>
     <button bind:this={deleteTrigger} class="danger" on:click={openDeleteDialog}>Delete game</button>
   </section>
