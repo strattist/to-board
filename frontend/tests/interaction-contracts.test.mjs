@@ -100,7 +100,7 @@ assert.doesNotMatch(reviewSource, /class="state-change"/);
 assert.match(reviewSource, /\.columns\{grid-template-columns:minmax\(0,1fr\)\}/);
 assert.match(reviewSource, /if \(!draftActionable \|\| actionBusy\) return;/);
 assert.match(reviewSource, /rejectionRetry, rejectionConfirm/);
-assert.match(reviewSource, /if \(loadError\)[\s\S]*?The latest Draft state could not be verified/);
+assert.match(reviewSource, /\{#if loadError\}[\s\S]*?The latest Draft state could not be verified/);
 const cancelRejectionHandler = reviewSource.match(/function cancelRejection\(\) \{([\s\S]*?)\n  \}/);
 assert.ok(cancelRejectionHandler, 'Cancel handler should exist');
 assert.doesNotMatch(cancelRejectionHandler[1], /submitAction|fetch\s*\(|\bapi\s*\(|getContent|publishContent|rejectContent/);
