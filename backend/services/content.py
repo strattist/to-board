@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -98,9 +99,32 @@ def generation_failed(session: Session, content: Content, message: str) -> Conte
     session.add(content)
     return content
 
-def publish(session: Session, content: Content) -> Content:
-    if content.pipeline_state != PipelineState.draft or not content.draft_quickstart_md or not content.draft_cheat_sheet_md:
-        raise HTTPException(status_code=409, detail='A complete Draft is required before publishing.')
+def _has_complete_draft(content: Content) -> bool:
+    return bool(
+        content.draft_quickstart_md
+        and content.draft_quickstart_md.strip()
+        and content.draft_cheat_sheet_md
+        and content.draft_cheat_sheet_md.strip()
+    )
+
+def draft_revision(content: Content) -> str | None:
+    if not _has_complete_draft(content):
+        return None
+    digest = hashlib.sha256()
+    for document in (content.draft_quickstart_md, content.draft_cheat_sheet_md):
+        encoded = document.encode('utf-8')
+        digest.update(len(encoded).to_bytes(8, 'big'))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+def _require_reviewed_draft(content: Content, expected_revision: str | None) -> None:
+    if content.pipeline_state != PipelineState.draft or not _has_complete_draft(content):
+        raise HTTPException(status_code=409, detail='A complete Draft is required before this action.')
+    if not expected_revision or expected_revision != draft_revision(content):
+        raise HTTPException(status_code=409, detail='Draft changed since it was loaded. Reload before acting.')
+
+def publish(session: Session, content: Content, expected_revision: str | None = None) -> Content:
+    _require_reviewed_draft(content, expected_revision)
     transition(session, content, PipelineState.published)
     content.published_quickstart_md = content.draft_quickstart_md
     content.published_cheat_sheet_md = content.draft_cheat_sheet_md
@@ -109,9 +133,8 @@ def publish(session: Session, content: Content) -> Content:
     content.published_at = datetime.now(timezone.utc)
     return content
 
-def reject(session: Session, content: Content) -> Content:
-    if content.pipeline_state != PipelineState.draft:
-        raise HTTPException(status_code=409, detail='Only Draft content can be rejected.')
+def reject(session: Session, content: Content, expected_revision: str | None = None) -> Content:
+    _require_reviewed_draft(content, expected_revision)
     transition(session, content, PipelineState.rejected)
     content.draft_quickstart_md = None
     content.draft_cheat_sheet_md = None

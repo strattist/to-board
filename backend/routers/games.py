@@ -13,7 +13,7 @@ from backend.core.config import get_settings
 from backend.core.utils import uuid4_str
 from backend.db.engine import get_session
 from backend.models import Content, Game, Rulebook, PipelineState, AppSettings
-from backend.services.content import begin_generation, get_or_create, is_extraction_warning, publish, reject
+from backend.services.content import begin_generation, draft_revision, get_or_create, is_extraction_warning, publish, reject
 from backend.services.extraction import count_extracted_tokens
 from backend.services.games import MAX_COVER_BYTES, COVER_EXTENSIONS, create_game, create_game_with_cover, delete_game, game_deletion_pending, game_operation_lock, retry_pending_game_cleanup, validate_cover
 from backend.services.rulebooks import replace_rulebook, safe_upload_path, validate_pdf
@@ -29,6 +29,8 @@ class GameUpdate(BaseModel):
 class GenerationRequest(BaseModel):
     confirm: bool = False
     allow_low_quality: bool = False
+class DraftActionRequest(BaseModel):
+    expected_revision: Optional[str] = None
 
 def payload(session: Session, game: Game) -> dict:
     rulebook = session.exec(select(Rulebook).where(Rulebook.game_id == game.id)).first()
@@ -261,19 +263,19 @@ def generate(game_id: str, body: GenerationRequest, background_tasks: Background
 def get_content(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
     game = session.get(Game, game_id); content = session.exec(select(Content).where(Content.game_id == game_id)).first()
     if not game or not content: raise HTTPException(404, 'Content not found.')
-    return {'game_id': game_id, 'pipeline_state': content.pipeline_state.value, 'draft_quickstart_md': content.draft_quickstart_md, 'draft_cheat_sheet_md': content.draft_cheat_sheet_md, 'published_quickstart_md': content.published_quickstart_md, 'published_cheat_sheet_md': content.published_cheat_sheet_md}
+    return {'game_id': game_id, 'pipeline_state': content.pipeline_state.value, 'draft_quickstart_md': content.draft_quickstart_md, 'draft_cheat_sheet_md': content.draft_cheat_sheet_md, 'draft_revision': draft_revision(content), 'published_quickstart_md': content.published_quickstart_md, 'published_cheat_sheet_md': content.published_cheat_sheet_md}
 
 @router.post('/{game_id}/content/publish')
-def publish_content(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
+def publish_content(game_id: str, body: Optional[DraftActionRequest] = None, session: Session = Depends(get_session), _host=Depends(require_host)):
     content = session.exec(select(Content).where(Content.game_id == game_id)).first()
     if not content: raise HTTPException(404, 'Content not found.')
-    publish(session, content); session.commit(); return {'pipeline_state': content.pipeline_state.value}
+    publish(session, content, body.expected_revision if body else None); session.commit(); return {'pipeline_state': content.pipeline_state.value}
 
 @router.post('/{game_id}/content/reject')
-def reject_content(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
+def reject_content(game_id: str, body: Optional[DraftActionRequest] = None, session: Session = Depends(get_session), _host=Depends(require_host)):
     content = session.exec(select(Content).where(Content.game_id == game_id)).first()
     if not content: raise HTTPException(404, 'Content not found.')
-    reject(session, content); session.commit(); return {'pipeline_state': content.pipeline_state.value}
+    reject(session, content, body.expected_revision if body else None); session.commit(); return {'pipeline_state': content.pipeline_state.value}
 
 @router.get('/{game_id}/preview')
 def preview(game_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
