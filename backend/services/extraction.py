@@ -1,7 +1,13 @@
 import asyncio
+import logging
 import os
+import subprocess
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
+
 
 def _remove_temporary(path: Path) -> None:
     try:
@@ -9,12 +15,42 @@ def _remove_temporary(path: Path) -> None:
     except OSError:
         pass
 
+
+def _ocr_page(page) -> str:
+    image = page.to_image(resolution=300).original
+    with BytesIO() as png:
+        image.save(png, format='PNG')
+        result = subprocess.run(
+            ['tesseract', 'stdin', 'stdout', '-l', 'fra+eng', '--psm', '3'],
+            input=png.getvalue(),
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+    return result.stdout.decode('utf-8').strip()
+
+
 def extract_pdf(pdf_path: str, output_path: str) -> int:
     text = ''
     try:
         import pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
-            text = '\n\n'.join((page.extract_text() or '') for page in pdf.pages)
+            pages = []
+            for page in pdf.pages:
+                page_text = page.extract_text() or ''
+                if not page_text.strip() and page.images:
+                    try:
+                        page_text = _ocr_page(page)
+                    except Exception as exc:
+                        # OCR is a fallback: an unreadable image or unavailable
+                        # local Tesseract should not discard text from other pages.
+                        logger.warning(
+                            'OCR failed for PDF page %s (%s)',
+                            page.page_number,
+                            type(exc).__name__,
+                        )
+                pages.append(page_text)
+            text = '\n\n'.join(pages)
     except Exception:
         # Keep failures explicit to the worker; no fabricated extraction is marked ready.
         raise

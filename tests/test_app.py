@@ -3,6 +3,7 @@ import os
 import base64
 import json
 import shutil
+import subprocess
 from types import SimpleNamespace
 from datetime import datetime, timezone
 from io import BytesIO
@@ -28,6 +29,7 @@ from backend.core.crypto import decrypt_api_key, encrypt_api_key
 from backend.services import games as games_service
 from backend.models import AppSettings, Content, Game, GameSession, PipelineState, Rulebook
 from backend.services.extraction import extract_pdf
+from backend.services import extraction as extraction_service
 from backend.workers.extraction import run_extraction
 from backend.workers.generation import run_generation
 from backend.services.llm import ProviderError, generate_content
@@ -969,6 +971,125 @@ def test_session_room_and_close_state(busy_pipeline_state):
         assert client.get('/api/room/' + record['room_slug']).json()['ended'] is True
 
 
+def test_preview_returns_published_pair_without_creating_session_or_provider_work(monkeypatch):
+    generation_jobs = []
+
+    async def record_generation_job(*args):
+        generation_jobs.append(args)
+
+    monkeypatch.setattr('backend.routers.games.run_generation', record_generation_job)
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Preview without a Session'}).json()
+        published_pair = {
+            'quickstart_md': '# Published Guide',
+            'cheat_sheet_md': '- Published rule',
+        }
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = PipelineState.generating
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = published_pair['quickstart_md']
+            content.published_cheat_sheet_md = published_pair['cheat_sheet_md']
+            content.draft_quickstart_md = '# Private Draft Guide'
+            content.draft_cheat_sheet_md = '- Private Draft rule'
+            db.add(content)
+            db.commit()
+
+        preview = client.get(f"/api/games/{game['id']}/preview")
+        assert preview.status_code == 200
+        assert preview.json()['quickstart_md'] == published_pair['quickstart_md']
+        assert preview.json()['cheat_sheet_md'] == published_pair['cheat_sheet_md']
+        assert 'Private Draft' not in preview.text
+        assert generation_jobs == []
+        with Session(engine) as db:
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.pipeline_state == PipelineState.generating
+            assert content.prior_pipeline_state == PipelineState.published
+            assert content.published_quickstart_md == published_pair['quickstart_md']
+            assert content.published_cheat_sheet_md == published_pair['cheat_sheet_md']
+
+        started = client.post(f"/api/sessions?game_id={game['id']}")
+        assert started.status_code == 201
+        room = client.get('/api/room/' + started.json()['room_slug'])
+        assert room.status_code == 200
+        assert room.json()['quickstart_md'] == preview.json()['quickstart_md']
+        assert room.json()['cheat_sheet_md'] == preview.json()['cheat_sheet_md']
+
+
+@pytest.mark.parametrize(
+    ('pipeline_state', 'published_quickstart', 'published_cheat_sheet', 'draft_quickstart', 'draft_cheat_sheet'),
+    [
+        (PipelineState.draft, None, None, '# Private Draft Guide', '- Private Draft rule'),
+        (PipelineState.rejected, None, None, None, None),
+        (PipelineState.draft, '# Partial Published Guide', None, '# Private Draft Guide', '- Private Draft rule'),
+        (PipelineState.draft, None, '- Partial Published rule', '# Private Draft Guide', '- Private Draft rule'),
+        (PipelineState.draft, '', '- Partial Published rule', '# Private Draft Guide', '- Private Draft rule'),
+        (PipelineState.draft, '# Partial Published Guide', '', '# Private Draft Guide', '- Private Draft rule'),
+    ],
+    ids=[
+        'draft-only',
+        'rejected',
+        'missing-published-cheat-sheet',
+        'missing-published-guide',
+        'empty-published-guide',
+        'empty-published-cheat-sheet',
+    ],
+)
+def test_preview_does_not_return_draft_rejected_or_incomplete_published_content(
+    pipeline_state, published_quickstart, published_cheat_sheet, draft_quickstart, draft_cheat_sheet
+):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Unavailable Preview'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = pipeline_state
+            content.published_quickstart_md = published_quickstart
+            content.published_cheat_sheet_md = published_cheat_sheet
+            content.draft_quickstart_md = draft_quickstart
+            content.draft_cheat_sheet_md = draft_cheat_sheet
+            before = (
+                content.pipeline_state,
+                content.published_quickstart_md,
+                content.published_cheat_sheet_md,
+                content.draft_quickstart_md,
+                content.draft_cheat_sheet_md,
+            )
+            db.add(content)
+            db.commit()
+
+        response = client.get(f"/api/games/{game['id']}/preview")
+        assert response.status_code == 404
+        assert response.json()['detail'] == 'Published Content not found.'
+        assert 'Private Draft' not in response.text
+        assert 'Partial Published' not in response.text
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            after = (
+                content.pipeline_state,
+                content.published_quickstart_md,
+                content.published_cheat_sheet_md,
+                content.draft_quickstart_md,
+                content.draft_cheat_sheet_md,
+            )
+            assert after == before
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+
+
+def test_preview_requires_host_authentication():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Protected Preview'}).json()
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            response = client.get(f"/api/games/{game['id']}/preview")
+            assert response.status_code == 401
+            assert 'Published Guide' not in response.text
+        finally:
+            settings.auth_disabled = previous
+
+
 @pytest.mark.parametrize(
     ('quickstart_md', 'cheat_sheet_md'),
     [('# Published guide', None), (None, '- Published rule')],
@@ -1470,6 +1591,61 @@ def test_extraction_persists_absolute_text_path(monkeypatch):
             assert Path(rulebook.extracted_text_path).is_absolute()
             assert Path(rulebook.extracted_text_path).is_file()
             assert content.pipeline_state == PipelineState.ready_to_generate
+
+
+def test_extraction_uses_local_ocr_for_image_only_pages(tmp_path, monkeypatch):
+    import pdfplumber
+
+    class ImageOnlyPage:
+        page_number = 1
+        images = [{}]
+
+        def extract_text(self):
+            return None
+
+    class ImageOnlyPDF:
+        pages = [ImageOnlyPage()]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(pdfplumber, 'open', lambda _path: ImageOnlyPDF())
+    monkeypatch.setattr(extraction_service, '_ocr_page', lambda _page: 'Les règles sont données.')
+    output_path = tmp_path / 'extracted.txt'
+
+    count = extract_pdf(str(tmp_path / 'scanned.pdf'), str(output_path))
+
+    assert count == 4
+    assert output_path.read_text(encoding='utf-8') == 'Les règles sont données.'
+
+
+def test_ocr_page_uses_french_and_english_tesseract_models(monkeypatch):
+    calls = {}
+
+    def fake_run(command, **kwargs):
+        calls['command'] = command
+        calls.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout='La règle est prête.'.encode('utf-8'))
+
+    class Page:
+        page_number = 1
+
+        def to_image(self, resolution):
+            assert resolution == 300
+            return SimpleNamespace(original=Image.new('RGB', (2, 2)))
+
+    monkeypatch.setattr(extraction_service.subprocess, 'run', fake_run)
+
+    text = extraction_service._ocr_page(Page())
+
+    assert text == 'La règle est prête.'
+    assert calls['command'] == ['tesseract', 'stdin', 'stdout', '-l', 'fra+eng', '--psm', '3']
+    assert calls['timeout'] == 30
+    assert calls['check'] is True
+    assert calls['input'].startswith(b'\x89PNG\r\n\x1a\n')
 
 
 def test_low_quality_extraction_warns_and_requires_server_override(monkeypatch):
