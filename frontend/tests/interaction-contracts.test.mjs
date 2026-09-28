@@ -12,6 +12,7 @@ import { applyReviewResult, canActOnDraft, contentChangeAnnouncement, hasComplet
 
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
 const reviewSource = readFileSync(new URL('../src/components/Review.svelte', import.meta.url), 'utf8');
+const previewSource = readFileSync(new URL('../src/components/Preview.svelte', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const sidebarSource = readFileSync(new URL('../src/components/Sidebar.svelte', import.meta.url), 'utf8');
 const collectionSource = readFileSync(new URL('../src/components/Collection.svelte', import.meta.url), 'utf8');
@@ -60,6 +61,8 @@ assert.match(cardSource, /\.card:hover \.cover,\.card:focus-visible \.cover\{tra
 assert.match(cardSource, /padding:12px 12px 64px/);
 assert.match(cardSource, /@media \(prefers-reduced-motion: reduce\)\{\.overlay,\.cover\{transition:none;transform:none\}\}/);
 assert.match(appSource, /segments\[2\]==='review'/);
+assert.match(appSource, /segments\[0\]==='games'&&segments\[2\]==='preview'/);
+assert.match(appSource, /\{:else if segments\[0\]==='games'&&segments\[2\]==='preview'\}<Preview id=\{gameId\}\/>/);
 assert.match(appSource, /navigationAnnouncement/);
 assert.match(appSource, /getElementById\('game-title'\)\?\.focus\(\)/);
 assert.match(appSource, /applyReviewResult\(games,gameId,result\.pipeline_state\)/);
@@ -98,6 +101,15 @@ assert.match(reviewSource, /else if !loading && !loadError/);
 assert.match(reviewSource, /expectedRevision = content\.draft_revision/);
 assert.doesNotMatch(reviewSource, /class="state-change"/);
 assert.match(reviewSource, /\.columns\{grid-template-columns:minmax\(0,1fr\)\}/);
+assert.match(previewSource, /import Markdown from '\.\.\/lib\/Markdown\.svelte'/);
+assert.match(previewSource, /getPreview\(gameId\)/);
+const previewContentBranch = previewSource.match(/\{:else if content\}([\s\S]*?)\{:else\}/);
+assert.ok(previewContentBranch, 'Preview should render content only in its content branch');
+assert.match(previewContentBranch[1], /<Markdown value=\{content\.quickstart_md\}\/\>/);
+assert.match(previewContentBranch[1], /<Markdown value=\{content\.cheat_sheet_md\}\/\>/);
+assert.match(previewSource, /\{:else if error\}<p class="error" role="alert">\{error\}<\/p>/);
+assert.match(previewSource, /Published Content is unavailable\./);
+assert.doesNotMatch(previewSource, /<button\b|<input\b|<textarea\b|generateContent|publishContent|rejectContent/);
 assert.match(reviewSource, /if \(!draftActionable \|\| actionBusy\) return;/);
 assert.match(reviewSource, /rejectionRetry, rejectionConfirm/);
 assert.match(reviewSource, /\{#if loadError\}[\s\S]*?The latest Draft state could not be verified/);
