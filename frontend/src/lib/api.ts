@@ -4,7 +4,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return response.status === 204 ? undefined as T : response.json();
 }
 export const getGames = () => api<Game[]>('/api/games');
-export type Provider = 'anthropic' | 'google';
+export type Provider = 'anthropic' | 'google' | 'openai';
 export type ProviderSettings = { provider: Provider; configured: boolean };
 export const getSettings = () => api<ProviderSettings>('/api/settings');
 export const updateSettings = (provider: Provider, apiKey: string) => api<ProviderSettings>('/api/settings', {

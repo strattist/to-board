@@ -8,7 +8,7 @@ from backend.models import AppSettings
 
 router = APIRouter(prefix='/api/settings', tags=['settings'])
 class SettingsUpdate(BaseModel):
-    provider: str = Field(pattern='^(anthropic|google)$')
+    provider: str = Field(pattern='^(anthropic|google|openai)$')
     api_key: str = Field(min_length=1)
 
     def normalized_api_key(self) -> str:

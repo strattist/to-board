@@ -109,3 +109,13 @@
 - source_spec: `spec-2-2-extract-rulebook-text-locally.md`
   summary: The extraction threshold accepts negative configuration values.
   evidence: `backend/core/config.py:16` predates this story; changing configuration validation is outside the frozen extraction behavior.
+
+- source_spec: `story-2-6-add-openai-as-a-supported-provider.md`
+  summary: Correct the Fernet secret placeholder and generation instructions in the environment example and README.
+  evidence: The README's `openssl rand -hex 32` output is not a Fernet key, while `backend/core/crypto.py` passes `SECRET_KEY` directly to `Fernet`.
+- source_spec: `story-2-6-add-openai-as-a-supported-provider.md`
+  summary: Enforce the prompt's Quick-start and Cheat Sheet word limits in shared provider output validation.
+  evidence: The shared prompt states 1200-word and 1000-word maxima, but the parser accepts any non-empty strings; this predates OpenAI support.
+- source_spec: `story-2-6-add-openai-as-a-supported-provider.md`
+  summary: Remove or clarify the unused `LLM_PROVIDER` environment setting in backend configuration.
+  evidence: `Settings.llm_provider` is not consumed by generation, which reads the persisted `AppSettings` provider instead.

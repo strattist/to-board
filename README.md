@@ -43,13 +43,17 @@ Set the output as `SECRET_KEY` in `.env`. `AUTH_DISABLED=true` is for local deve
 
 ### Provider model overrides
 
-The API uses `ANTHROPIC_MODEL` and `GOOGLE_MODEL` at runtime. The defaults are
-`claude-haiku-4-5-20251001` and `gemini-2.0-flash`; set either variable in the
-host `.env` to change the model, then recreate the API container:
+The Host selects Anthropic, Google, or OpenAI in Settings; the selected provider
+and encrypted API key are persisted there. Model IDs stay server-side and are
+configured at runtime with `ANTHROPIC_MODEL`, `GOOGLE_MODEL`, and `OPENAI_MODEL`.
+The defaults are `claude-haiku-4-5-20251001`, `gemini-2.0-flash`, and
+`gpt-6-luna`; set a variable in the host `.env` to change its model, then
+recreate the API container:
 
 ```dotenv
 ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 GOOGLE_MODEL=gemini-2.0-flash
+OPENAI_MODEL=gpt-6-luna
 ```
 
 Model IDs are provider configuration, not application data. Use the provider's
@@ -57,6 +61,7 @@ official model catalog or console to choose an ID; do not put API keys in model
 URLs, `.env` examples, logs, or frontend code. Anthropic's current lifecycle
 and replacement guidance is available in its [model deprecations
 documentation](https://docs.anthropic.com/en/docs/about-claude/model-deprecations).
+OpenAI lists its available IDs in the [OpenAI model catalog](https://developers.openai.com/api/docs/models).
 
 To list the Anthropic model IDs enabled for your key, enter it without putting
 the secret in shell history, then call the Models API:

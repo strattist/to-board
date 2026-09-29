@@ -45,7 +45,7 @@ graph LR
     spa -->|"fetch /api/*"| nginx
     api --> sqlite[("SQLite\nto-board-db dataset")]
     api --> uploads[("PDFs + text cache\nto-board-uploads dataset")]
-    api -->|"HTTPS at generation time only"| llm["Cloud LLM API\n(Anthropic / Google)"]
+    api -->|"HTTPS at generation time only"| llm["Cloud LLM API\n(Anthropic / Google / OpenAI)"]
     api -->|"JWKS on startup"| authentik["Authentik\n(OIDC provider)"]
 ```
 
@@ -137,7 +137,7 @@ stateDiagram-v2
 - **Rule:**
   - Every Host route (`/api/games/*`, `/api/sessions/*`, `/api/settings/*`) depends on `Depends(require_host)` — a FastAPI dependency that validates the OIDC JWT from the `Authorization` header against Authentik's JWKS endpoint (cached on startup, refreshed on key rotation).
   - Guest routes (`GET /api/room/:slug`, `GET /api/room/:slug/events`) have no auth dependency. No Guest identity is stored.
-  - The LLM API key is stored as an encrypted TEXT value in SQLite (`Settings` table). It is never returned in any API response and never included in the compiled frontend bundle.
+  - Provider selection and the encrypted LLM API key are stored in the singleton SQLite `Settings` row. The key is never returned in any API response and never included in the compiled frontend bundle. Model IDs are server-side environment configuration.
   - Encryption uses `cryptography.fernet.Fernet` exclusively. The Fernet key is read from env var `SECRET_KEY` (32-byte URL-safe base64). Encryption and decryption are implemented exactly once in `backend/core/crypto.py` (`encrypt_api_key()` / `decrypt_api_key()`). All other modules call these functions; inline crypto is forbidden.
 
 ### AD-9 — Rulebook cardinality: one active Rulebook per Game
@@ -160,7 +160,7 @@ stateDiagram-v2
 | **Dates / timestamps** | ISO 8601 UTC strings in API responses (`created_at`, `started_at`, `ended_at`). SQLite stores as TEXT |
 | **Error shape** | `{"detail": "<human-readable message>"}` — FastAPI default. HTTP 409 for invalid pipeline transitions; 422 for validation errors; 404 for missing resources |
 | **State mutation** | Only `backend/services/` layer mutates `pipeline_state`. Routers call services; workers call services to write results. No direct DB writes from routers or workers |
-| **Config** | All runtime config (dataset paths, Authentik issuer URL, LLM provider choice) via environment variables read at startup. No hardcoded paths. `backend/core/config.py` is the single config object |
+| **Config** | Runtime config (dataset paths, Authentik issuer URL, and provider model IDs) comes from environment variables read at startup. The selected LLM provider is persisted in `Settings`. No hardcoded paths. `backend/core/config.py` is the single config object |
 | **No Guest data** | No logging middleware that records request IPs. No analytics. Guest SSE connections are tracked in-memory only (no DB write); the tracking structure stores only the asyncio Queue, not the client IP |
 | **Markdown rendering** | Frontend uses a single shared `<Markdown>` Svelte component (wrapping a lightweight library, e.g. `marked`) for all content rendering. Sanitization applied before render |
 
@@ -194,7 +194,7 @@ stateDiagram-v2
 to-board/
   backend/
     core/
-      config.py        # env-var config object (paths, OIDC issuer, LLM provider)
+      config.py        # env-var paths, OIDC issuer, and provider model IDs; provider selection is persisted in Settings
       crypto.py        # Fernet encrypt_api_key() / decrypt_api_key() — only crypto impl
       utils.py         # slugify() and other shared utilities
     routers/
@@ -205,7 +205,7 @@ to-board/
     services/
       content.py       # pipeline state machine + generation orchestration
       extraction.py    # PDF text extraction (pdfplumber, run_in_executor)
-      llm.py           # LLM API client (Anthropic / Google)
+      llm.py           # LLM API client (Anthropic / Google / OpenAI)
       auth.py          # OIDC JWT verification (require_host dependency)
     models/
       game.py          # Game, Rulebook SQLModel tables
@@ -233,7 +233,7 @@ to-board/
     vite.config.ts
     Dockerfile          # builds static dist/; final image is nginx:alpine
   docker-compose.yml    # two services: api, web; two bind mounts; no managed volumes
-  .env.example          # DB_PATH, UPLOADS_PATH, OIDC_ISSUER, LLM_PROVIDER, etc.
+  .env.example          # DB_PATH, UPLOADS_PATH, OIDC_ISSUER, provider model IDs, etc.
 ```
 
 ### Container topology
@@ -341,10 +341,10 @@ erDiagram
 ## Deferred
 
 - **HTTPS / TLS termination:** PRD A-11 defers this. The Compose stack listens on HTTP port 80. Reverse-proxy TLS (e.g., Caddy, Nginx Proxy Manager on TrueNAS) is a host-level concern, not decided here.
-- **LLM provider selection UI:** FR-9 allows provider selection; the mechanism (dropdown in Settings vs. env var only) is an implementation detail for the Settings epic.
+- **LLM provider selection and model configuration:** The Host selects Anthropic, Google, or OpenAI in Settings; provider selection and the encrypted API key persist in the singleton Settings row. Model IDs are configured server-side with `ANTHROPIC_MODEL`, `GOOGLE_MODEL`, and `OPENAI_MODEL`.
 - **Cover image storage:** PRD FR-1 allows an optional cover image. Storage path (`/data/uploads/covers/`) and serving approach (direct nginx static serve vs. API route) deferred to the Game Collection epic.
 - **PDF.js version pinning and worker bundling:** version 4.x specified; exact patch version and the Vite plugin used to copy the PDF.js worker are deferred to the PDF Viewer epic.
 - **Markdown sanitization library:** the `<Markdown>` component must sanitize LLM output before render; specific library choice (`dompurify`, `isomorphic-dompurify`, or `marked`'s built-in sanitizer) deferred to the Content Review epic.
-- **LLM prompt versioning:** the prompts sent to the cloud LLM for Quick-start Guide and Cheat Sheet generation are not fixed here. Prompt content, token limits, and model selection (e.g., Claude Haiku vs. Gemini Flash) deferred to the Generation epic.
+- **LLM prompt versioning:** the prompts sent to the cloud LLM for Quick-start Guide and Cheat Sheet generation are not fixed here. Prompt content and token limits are deferred to the Generation epic.
 - **Play Mode (v1.1):** deferred per UX spine — no surfaces in v1.
 - **v1.1 features:** content quality voting, Cheat Sheet deep-links to PDF, private phone view, session photos — all deferred per PRD §7.1.

@@ -9,7 +9,7 @@ from backend.models import AppSettings
 
 
 PROMPT = '''You are generating board game reference content from an official rulebook. Return exactly one JSON object with two Markdown strings: quickstart_md (a concise narrative guide, at most 1200 words) and cheat_sheet_md (a structured lookup, at most 1000 words). Do not include a preamble, explanation, or code fence. Never invent rules; preserve uncertainty explicitly.'''
-_PROVIDER_LABELS = {'anthropic': 'Anthropic', 'google': 'Google'}
+_PROVIDER_LABELS = {'anthropic': 'Anthropic', 'google': 'Google', 'openai': 'OpenAI'}
 _ERROR_REASONS = {
     'invalid_configuration': 'configuration is invalid',
     'missing_api_key': 'API key is missing',
@@ -17,6 +17,7 @@ _ERROR_REASONS = {
     'model_not_found': 'model was not found or is unavailable',
     'request_rejected': 'model or request configuration was rejected',
     'rate_limited': 'provider rate limit was reached',
+    'usage_limit': 'billing or usage limit was reached; review OpenAI billing and usage limits',
     'provider_unavailable': 'provider is unavailable',
     'access_rejected': 'model or provider access was rejected',
     'invalid_response': 'returned an invalid response',
@@ -26,6 +27,13 @@ _ERROR_REASONS = {
 }
 _MODEL_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
 _ANTHROPIC_MAX_TOKENS = 10000
+_OPENAI_MAX_OUTPUT_TOKENS = 10000
+_OPENAI_BILLING_ERROR_CODES = {
+    'credit_balance_exhausted',
+    'organization_spend_limit_exceeded',
+    'project_spend_limit_exceeded',
+    'organization_usage_limit_exceeded',
+}
 
 
 class ProviderError(ValueError):
@@ -51,13 +59,25 @@ def safe_provider_failure(provider: str) -> str:
     return f'{_provider_label(provider)} provider request failed.'
 
 
-def _status_error(provider: str, status_code: int) -> ProviderError:
+def _status_error(
+    provider: str,
+    status_code: int,
+    provider_error_code: str | None = None,
+    provider_error_type: str | None = None,
+) -> ProviderError:
     """Map provider HTTP statuses to actionable, secret-safe messages."""
+    if status_code == 408:
+        return _provider_error(provider, 'provider_unavailable')
     if status_code == 404:
         return _provider_error(provider, 'model_not_found')
     if status_code == 400:
         return _provider_error(provider, 'request_rejected')
     if status_code == 429:
+        if provider == 'openai' and (
+            provider_error_code in _OPENAI_BILLING_ERROR_CODES
+            or provider_error_type == 'insufficient_quota'
+        ):
+            return _provider_error(provider, 'usage_limit')
         return _provider_error(provider, 'rate_limited')
     if status_code >= 500:
         return _provider_error(provider, 'provider_unavailable')
@@ -98,7 +118,7 @@ async def generate_content(settings: AppSettings, extracted_text: str) -> tuple[
             }
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post('https://api.anthropic.com/v1/messages', json=body, headers=headers)
-        else:
+        elif provider == 'google':
             model = _validated_model(provider, runtime_settings.google_model)
             body = {'contents': [{'parts': [{'text': prompt}]}]}
             # Keep the Google key out of the URL so it cannot be disclosed by
@@ -107,12 +127,37 @@ async def generate_content(settings: AppSettings, extracted_text: str) -> tuple[
             url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(url, json=body, headers=headers)
+        else:
+            model = _validated_model(provider, runtime_settings.openai_model)
+            body = {
+                'model': model,
+                'instructions': PROMPT,
+                'input': extracted_text,
+                'store': False,
+                'max_output_tokens': _OPENAI_MAX_OUTPUT_TOKENS,
+            }
+            headers = {'Authorization': f'Bearer {key}', 'content-type': 'application/json'}
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post('https://api.openai.com/v1/responses', json=body, headers=headers)
         if response.status_code == 401:
             raise _provider_error(provider, 'rejected_api_key')
         if response.status_code == 403:
             raise _provider_error(provider, 'access_rejected')
         if response.status_code >= 400:
-            raise _status_error(provider, response.status_code)
+            provider_error_code = None
+            provider_error_type = None
+            if provider == 'openai' and response.status_code == 429:
+                try:
+                    error_payload = response.json()
+                    error = error_payload.get('error') if isinstance(error_payload, dict) else None
+                    if isinstance(error, dict):
+                        code = error.get('code')
+                        error_type = error.get('type')
+                        provider_error_code = code if isinstance(code, str) else None
+                        provider_error_type = error_type if isinstance(error_type, str) else None
+                except Exception:
+                    pass
+            raise _status_error(provider, response.status_code, provider_error_code, provider_error_type)
         if provider == 'anthropic':
             payload = response.json()
             if payload.get('stop_reason') in {'refusal', 'safety'}:
@@ -125,7 +170,7 @@ async def generate_content(settings: AppSettings, extracted_text: str) -> tuple[
             )
             if not text:
                 raise _provider_error(provider, 'invalid_response')
-        else:
+        elif provider == 'google':
             payload = response.json()
             if payload.get('promptFeedback', {}).get('blockReason'):
                 raise _provider_error(provider, 'content_blocked')
@@ -133,6 +178,37 @@ async def generate_content(settings: AppSettings, extracted_text: str) -> tuple[
             if candidate.get('finishReason') in {'SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT'}:
                 raise _provider_error(provider, 'content_blocked')
             text = candidate['content']['parts'][0]['text']
+        else:
+            payload = response.json()
+            if payload.get('status') == 'failed':
+                raise _provider_error(provider, 'request_failed')
+            if payload.get('status') != 'completed':
+                raise _provider_error(provider, 'incomplete_content')
+            output = payload.get('output')
+            if not isinstance(output, list):
+                raise _provider_error(provider, 'invalid_response')
+            output_text = []
+            for item in output:
+                if not isinstance(item, dict):
+                    raise _provider_error(provider, 'invalid_response')
+                if item.get('type') != 'message':
+                    continue
+                content = item.get('content')
+                if not isinstance(content, list):
+                    raise _provider_error(provider, 'invalid_response')
+                for content_item in content:
+                    if not isinstance(content_item, dict):
+                        raise _provider_error(provider, 'invalid_response')
+                    if content_item.get('type') == 'refusal':
+                        raise _provider_error(provider, 'content_blocked')
+                    if content_item.get('type') == 'output_text':
+                        value = content_item.get('text')
+                        if not isinstance(value, str):
+                            raise _provider_error(provider, 'invalid_response')
+                        output_text.append(value)
+            text = ''.join(output_text)
+            if not text.strip():
+                raise _provider_error(provider, 'invalid_response')
     except ProviderError:
         raise
     except (httpx.TimeoutException, httpx.RequestError):

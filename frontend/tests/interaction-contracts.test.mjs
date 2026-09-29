@@ -235,6 +235,9 @@ assert.match(settingsSource, /createSettingsController/);
 assert.match(settingsSource, /on:submit\|preventDefault={save}/);
 assert.match(settingsSource, /disabled=\{saving \|\| !key\.trim\(\)\}/);
 assert.match(settingsSource, /key = ''/);
+assert.match(settingsSource, /<option value="anthropic">Anthropic<\/option>/);
+assert.match(settingsSource, /<option value="google">Google<\/option>/);
+assert.match(settingsSource, /<option value="openai">OpenAI<\/option>/);
 assert.match(readFileSync(new URL('../src/components/StatusBadge.svelte', import.meta.url), 'utf8'), /warning-badge/);
 assert.doesNotMatch(settingsSource, /fetch\(/);
 
@@ -382,10 +385,12 @@ assert.equal(request.path, '/api/settings');
 assert.equal(request.options.method, 'PUT');
 assert.equal(request.options.credentials, 'include');
 assert.deepEqual(JSON.parse(request.options.body), { provider: 'google', api_key: 'google-secret' });
+await updateSettings('openai', 'openai-secret');
+assert.deepEqual(JSON.parse(request.options.body), { provider: 'openai', api_key: 'openai-secret' });
 
 const settingsRequests = [];
 const settingsController = createSettingsController({
-  getSettings: async () => ({ provider: 'google', configured: true }),
+  getSettings: async () => ({ provider: 'openai', configured: true }),
   updateSettings: async (provider, apiKey) => {
     settingsRequests.push([provider, apiKey]);
     return { provider, configured: true };
@@ -393,11 +398,11 @@ const settingsController = createSettingsController({
 });
 await settingsController.load();
 assert.deepEqual(settingsController.state, {
-  provider: 'google', configured: true, loaded: true, loading: false,
+  provider: 'openai', configured: true, loaded: true, loading: false,
   saving: false, error: '', message: '',
 });
 assert.equal(await settingsController.save('controller-secret'), true);
-assert.deepEqual(settingsRequests, [['google', 'controller-secret']]);
+assert.deepEqual(settingsRequests, [['openai', 'controller-secret']]);
 assert.equal(settingsController.state.message, 'Settings saved.');
 
 const failedSettingsController = createSettingsController({
