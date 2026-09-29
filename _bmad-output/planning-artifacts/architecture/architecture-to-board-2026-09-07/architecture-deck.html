@@ -600,7 +600,7 @@ erDiagram
     <pre>to-board/
   backend/
     core/
-      config.py        <span class="comment"># env-var config (paths, OIDC issuer, LLM provider)</span>
+      config.py        <span class="comment"># env-var paths, OIDC issuer, and provider model IDs; provider selection is in Settings</span>
       crypto.py        <span class="comment"># Fernet encrypt_api_key() / decrypt_api_key() — only crypto impl</span>
       utils.py         <span class="comment"># slugify() and other shared utilities</span>
     routers/
@@ -611,7 +611,7 @@ erDiagram
     services/
       content.py       <span class="comment"># pipeline state machine + generation orchestration</span>
       extraction.py    <span class="comment"># PDF text extraction (pdfplumber, run_in_executor)</span>
-      llm.py           <span class="comment"># LLM API client (Anthropic / Google)</span>
+      llm.py           <span class="comment"># LLM API client (Anthropic / Google / OpenAI)</span>
       auth.py          <span class="comment"># OIDC JWT verification (require_host dependency)</span>
     models/
       game.py          <span class="comment"># Game, Rulebook SQLModel tables</span>
@@ -652,7 +652,7 @@ erDiagram
       <div class="conv-row"><span class="conv-key">Timestamps</span><span class="conv-val">ISO 8601 UTC strings in API responses. SQLite stores as TEXT. Columns: <code>created_at</code>, <code>started_at</code>, <code>ended_at</code>, <code>generated_at</code>, <code>published_at</code>.</span></div>
       <div class="conv-row"><span class="conv-key">Error shape</span><span class="conv-val"><code>{"detail": "..."}</code> — FastAPI default. HTTP 409 for invalid pipeline transitions; 422 for validation; 404 for missing resources.</span></div>
       <div class="conv-row"><span class="conv-key">State mutation</span><span class="conv-val">Only <code>backend/services/</code> mutates <code>pipeline_state</code>. Routers call services; workers call services to write results. No direct DB writes from routers or workers.</span></div>
-      <div class="conv-row"><span class="conv-key">Config</span><span class="conv-val">All runtime config via environment variables. <code>backend/core/config.py</code> is the single config object. No hardcoded paths.</span></div>
+      <div class="conv-row"><span class="conv-key">Config</span><span class="conv-val">Runtime paths, Authentik settings, and provider model IDs come from environment variables. The selected LLM provider and encrypted API key persist in Settings. <code>backend/core/config.py</code> is the single runtime config object.</span></div>
       <div class="conv-row"><span class="conv-key">Crypto</span><span class="conv-val">Fernet only. <code>backend/core/crypto.py</code> is the single implementation. Inline crypto forbidden everywhere else.</span></div>
       <div class="conv-row"><span class="conv-key">No Guest data</span><span class="conv-val">No logging middleware recording request IPs. No analytics. Guest SSE connections tracked in-memory only (asyncio Queue, no client IP). No Guest data in SQLite.</span></div>
       <div class="conv-row"><span class="conv-key">Markdown rendering</span><span class="conv-val">Single shared <code>&lt;Markdown&gt;</code> Svelte component for all content rendering. Sanitization applied before render.</span></div>
@@ -696,11 +696,10 @@ erDiagram
     <p style="font-size:14px; color:var(--fg-muted); margin-bottom:20px;">Decisions intentionally pushed down — each with the reason it can wait.</p>
     <div class="deferred-list">
       <div class="deferred-item"><strong>HTTPS / TLS termination</strong> — PRD A-11 defers this. Stack listens on HTTP port 80. Reverse-proxy TLS is a host-level concern outside the Compose file.</div>
-      <div class="deferred-item"><strong>LLM provider selection UI</strong> — FR-9 allows configurable provider; dropdown vs. env-var-only mechanism is an implementation detail for the Settings epic.</div>
       <div class="deferred-item"><strong>Cover image storage path &amp; serving</strong> — <code>/data/uploads/covers/</code> is the natural location; whether nginx serves it directly or the API proxies it is deferred to the Game Collection epic.</div>
       <div class="deferred-item"><strong>pdfjs-dist worker bundling</strong> — version 6.3.289 specified; exact Vite plugin config for copying the PDF.js worker is deferred to the PDF Viewer epic.</div>
       <div class="deferred-item"><strong>Markdown sanitization library</strong> — <code>&lt;Markdown&gt;</code> component must sanitize LLM output; specific library (DOMPurify, marked built-in) deferred to Content Review epic.</div>
-      <div class="deferred-item"><strong>LLM prompt versioning</strong> — prompt content, token limits, and model selection (Claude Haiku vs. Gemini Flash) deferred to the Generation epic.</div>
+      <div class="deferred-item"><strong>LLM prompt versioning</strong> — prompt content and token limits are deferred to the Generation epic; provider model IDs remain server-side environment configuration.</div>
       <div class="deferred-item"><strong>Play Mode (v1.1)</strong> — deferred per UX spine; no Play Mode surfaces in v1.</div>
       <div class="deferred-item"><strong>v1.1 features</strong> — content quality voting, Cheat Sheet deep-links, private phone view, session photos — all deferred per PRD §7.1.</div>
     </div>

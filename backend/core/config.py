@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     llm_provider: str = 'anthropic'
     anthropic_model: str = 'claude-haiku-4-5-20251001'
     google_model: str = 'gemini-2.0-flash'
+    openai_model: str = 'gpt-6-luna'
     auth_disabled: bool = False
     extraction_min_tokens: int = 500
     app_base_url: str = 'http://localhost'

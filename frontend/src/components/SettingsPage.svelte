@@ -44,6 +44,7 @@
         <select bind:value={provider} disabled={saving}>
           <option value="anthropic">Anthropic</option>
           <option value="google">Google</option>
+          <option value="openai">OpenAI</option>
         </select>
       </label>
       <label>API key
