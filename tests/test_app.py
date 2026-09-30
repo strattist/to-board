@@ -2401,3 +2401,60 @@ def test_stale_generation_worker_ignores_replaced_rulebook():
             assert content.pipeline_state == PipelineState.generating
             assert content.draft_quickstart_md is None
             assert content.draft_cheat_sheet_md is None
+
+
+def _publish_pair(game_id: str, state: PipelineState):
+    with Session(engine) as db:
+        content = db.exec(select(Content).where(Content.game_id == game_id)).one()
+        content.pipeline_state = state
+        content.published_quickstart_md = '# Start'
+        content.published_cheat_sheet_md = '- Rule'
+        db.add(content)
+        db.commit()
+
+
+@pytest.mark.parametrize(
+    'state',
+    [PipelineState.no_rulebook, PipelineState.ready_to_generate],
+    ids=['no-rulebook', 'extraction-complete'],
+)
+def test_session_starts_from_published_content_without_extraction_prerequisite(state):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Extraction optional'}).json()
+        _publish_pair(game['id'], state)
+        created = client.post(f"/api/sessions?game_id={game['id']}")
+        assert created.status_code == 201
+        room = client.get('/api/room/' + created.json()['room_slug']).json()
+        assert room['quickstart_md'] == '# Start'
+        assert room['cheat_sheet_md'] == '- Rule'
+
+
+@pytest.mark.parametrize(
+    'state',
+    [PipelineState.no_rulebook, PipelineState.ready_to_generate],
+    ids=['no-rulebook', 'extraction-complete'],
+)
+def test_session_refused_without_published_content_regardless_of_extraction(state):
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Nothing published'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            content.pipeline_state = state
+            db.add(content)
+            db.commit()
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        assert response.status_code == 422
+        assert response.json()['detail'] == 'Published Content is required to start a Session.'
+
+
+def test_generation_still_requires_extraction_when_content_is_published():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'No extraction'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        response = client.post(f"/api/games/{game['id']}/generate", json={'confirm': True})
+        assert response.status_code == 422
+        assert response.json()['detail'] == 'Rulebook extraction is not complete.'
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
+            assert content.published_quickstart_md == '# Start'
+            assert content.published_cheat_sheet_md == '- Rule'
