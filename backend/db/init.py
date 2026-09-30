@@ -1,8 +1,13 @@
+import logging
 from pathlib import Path
+from sqlalchemy import func
 from sqlmodel import Session, select
 from backend.db.engine import create_db_and_tables, engine
 from backend.core.config import get_settings
-from backend.models import Content, PipelineState, Rulebook
+from backend.models import Content, GameSession, PipelineState, Rulebook
+from backend.models.session import ACTIVE_SESSION_INDEX
+
+logger = logging.getLogger(__name__)
 
 
 def _cleanup_candidates(candidates: list[Path]) -> bool:
@@ -29,8 +34,23 @@ def _cleanup_candidates(candidates: list[Path]) -> bool:
     return cleanup_failed
 
 
+def _ensure_active_session_index() -> None:
+    # create_all does not add indexes to tables that already exist.
+    with Session(engine) as session:
+        duplicates = session.exec(
+            select(GameSession.game_id).where(GameSession.ended_at.is_(None)).group_by(GameSession.game_id).having(func.count() > 1)
+        ).all()
+    if duplicates:
+        logger.error('Games %s have several active Sessions; end the extras to enable the one-active-Session guarantee.', list(duplicates))
+        return
+    for index in GameSession.__table__.indexes:
+        if index.name == ACTIVE_SESSION_INDEX:
+            index.create(engine, checkfirst=True)
+
+
 def initialize_database() -> None:
     create_db_and_tables()
+    _ensure_active_session_index()
     uploads_root = get_settings().uploads_path.resolve()
     with Session(engine) as session:
         for content in session.exec(select(Content)).all():

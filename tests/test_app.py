@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -22,9 +23,11 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 from PIL import Image
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, delete, select
 from backend.main import app
 from backend.db.engine import engine
+from backend.db.init import initialize_database
 from backend.core.config import Settings, get_settings
 from backend.core.crypto import decrypt_api_key, encrypt_api_key
 from backend.services import games as games_service
@@ -2517,7 +2520,7 @@ def test_session_creation_failure_is_not_reported_as_success(monkeypatch):
         _publish_pair(game['id'], PipelineState.published)
 
         def fail_commit(self):
-            raise RuntimeError('disk full')
+            raise OperationalError('COMMIT', {}, Exception('disk full'))
 
         monkeypatch.setattr(Session, 'commit', fail_commit)
         response = client.post(f"/api/sessions?game_id={game['id']}")
@@ -2526,3 +2529,36 @@ def test_session_creation_failure_is_not_reported_as_success(monkeypatch):
         assert response.json() == {'detail': 'Session could not be saved. No Room was created.'}
         with Session(engine) as db:
             assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+
+
+def test_concurrent_session_starts_create_one_active_session():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Race'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        barrier = threading.Barrier(6)
+        codes = []
+
+        def start():
+            barrier.wait()
+            codes.append(client.post(f"/api/sessions?game_id={game['id']}").status_code)
+
+        threads = [threading.Thread(target=start) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert codes.count(201) == 1
+        assert set(codes) == {201, 409}
+        with Session(engine) as db:
+            assert len(db.exec(select(GameSession).where(GameSession.game_id == game['id'], GameSession.ended_at.is_(None))).all()) == 1
+
+
+def test_active_session_index_is_added_to_an_existing_database():
+    with TestClient(app):
+        pass
+    with engine.begin() as conn:
+        conn.exec_driver_sql('DROP INDEX IF EXISTS ux_gamesession_one_active_per_game')
+    initialize_database()
+    with engine.connect() as conn:
+        names = [row[1] for row in conn.exec_driver_sql("PRAGMA index_list('gamesession')")]
+    assert 'ux_gamesession_one_active_per_game' in names

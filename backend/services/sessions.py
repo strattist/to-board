@@ -1,10 +1,14 @@
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 from fastapi import HTTPException
 from backend.models import Content, Game, GameSession
 from backend.core.utils import uuid4_str
+
+logger = logging.getLogger(__name__)
 
 def make_room_slug(prefix: str, session: Session) -> str:
     for _ in range(20):
@@ -17,18 +21,31 @@ def make_room_slug(prefix: str, session: Session) -> str:
 def create_session(session: Session, game: Game, content: Content) -> GameSession:
     if not content.published_quickstart_md or not content.published_cheat_sheet_md:
         raise HTTPException(status_code=422, detail='Published Content is required to start a Session.')
-    active = session.exec(select(GameSession).where(GameSession.game_id == game.id, GameSession.ended_at.is_(None))).first()
-    if active:
-        raise HTTPException(status_code=409, detail='This Game already has an active Session.')
-    record = GameSession(id=uuid4_str(), game_id=game.id, game_title_snapshot=game.title, room_slug=make_room_slug(game.room_slug_prefix, session))
     try:
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-    except Exception as exc:
+        for attempt in range(3):
+            active = session.exec(select(GameSession).where(GameSession.game_id == game.id, GameSession.ended_at.is_(None))).first()
+            if active:
+                raise HTTPException(status_code=409, detail='This Game already has an active Session.')
+            record = GameSession(id=uuid4_str(), game_id=game.id, game_title_snapshot=game.title, room_slug=make_room_slug(game.room_slug_prefix, session))
+            try:
+                session.add(record)
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                # The database is the arbiter: a concurrent start took the active slot or this Room slug.
+                if 'room_slug' in str(exc.orig) and attempt < 2:
+                    continue
+                if 'room_slug' not in str(exc.orig):
+                    raise HTTPException(status_code=409, detail='This Game already has an active Session.') from exc
+                raise
+            session.refresh(record)
+            return record
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
         session.rollback()
+        logger.exception('Session could not be saved for Game %s', game.id)
         raise HTTPException(status_code=500, detail='Session could not be saved. No Room was created.') from exc
-    return record
 
 def parse_json(value: str):
     try:
