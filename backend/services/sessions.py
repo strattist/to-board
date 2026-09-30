@@ -21,9 +21,13 @@ def create_session(session: Session, game: Game, content: Content) -> GameSessio
     if active:
         raise HTTPException(status_code=409, detail='This Game already has an active Session.')
     record = GameSession(id=uuid4_str(), game_id=game.id, game_title_snapshot=game.title, room_slug=make_room_slug(game.room_slug_prefix, session))
-    session.add(record)
-    session.commit()
-    session.refresh(record)
+    try:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail='Session could not be saved. No Room was created.') from exc
     return record
 
 def parse_json(value: str):

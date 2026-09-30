@@ -2,10 +2,11 @@ import asyncio
 import os
 import base64
 import json
+import re
 import shutil
 import subprocess
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -2458,3 +2459,70 @@ def test_generation_still_requires_extraction_when_content_is_published():
             content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
             assert content.published_quickstart_md == '# Start'
             assert content.published_cheat_sheet_md == '- Rule'
+
+
+def test_session_start_persists_identity_slug_and_utc_timestamp():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Wingspan Start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        assert response.status_code == 201
+        body = response.json()
+        assert str(UUID(body['id'])) == body['id']
+        assert body['game_title_snapshot'] == 'Wingspan Start'
+        assert re.fullmatch(r'wingspan-start-[0-9a-z]{4}', body['room_slug'])
+        started_at = datetime.fromisoformat(body['started_at'])
+        assert started_at.utcoffset() == timedelta(0)
+        assert body['ended_at'] is None
+        with Session(engine) as db:
+            record = db.get(GameSession, body['id'])
+            assert record.game_id == game['id']
+            assert record.room_slug == body['room_slug']
+
+
+def test_second_session_is_rejected_and_keeps_active_room():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'One at a time'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        first = client.post(f"/api/sessions?game_id={game['id']}").json()
+        second = client.post(f"/api/sessions?game_id={game['id']}")
+        assert second.status_code == 409
+        with Session(engine) as db:
+            rows = db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all()
+            assert [row.id for row in rows] == [first['id']]
+            assert rows[0].ended_at is None
+        room = client.get('/api/room/' + first['room_slug'])
+        assert room.status_code == 200
+        assert room.json()['ended'] is False
+
+
+def test_session_creation_requires_host():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Host only start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.post(f"/api/sessions?game_id={game['id']}").status_code == 401
+        finally:
+            settings.auth_disabled = previous
+        with Session(engine) as db:
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+
+
+def test_session_creation_failure_is_not_reported_as_success(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Failing start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+
+        def fail_commit(self):
+            raise RuntimeError('disk full')
+
+        monkeypatch.setattr(Session, 'commit', fail_commit)
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        monkeypatch.undo()
+        assert response.status_code == 500
+        assert response.json() == {'detail': 'Session could not be saved. No Room was created.'}
+        with Session(engine) as db:
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
