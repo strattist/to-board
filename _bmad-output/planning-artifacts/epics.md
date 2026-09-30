@@ -588,6 +588,29 @@ So that I can choose OpenAI alongside the existing supported providers.
 **Then** existing Draft, Rejected, and Published Content remains unchanged
 **And** future generation uses the selected provider.
 
+### Story 2.7: Make Rulebook Extraction Optional to Start a Session
+
+As the Host,
+I want to start a Session whenever the Game already has Published Content,
+So that a game night is not blocked by a missing or still-running Rulebook extraction.
+
+**Acceptance Criteria:**
+
+**Given** a Game has Published Content
+**When** its Rulebook extraction is absent, pending, or failed
+**Then** the Host can still start a Session
+**And** the Guest Room is backed only by the Published Content.
+
+**Given** a Game has no Published Content
+**When** the Host tries to start a Session
+**Then** the start is refused with a clear validation error
+**And** Game Detail shows the action as unavailable.
+
+**Given** extraction is absent or in progress
+**When** the Host looks at generation
+**Then** generation stays disabled until extraction completes
+**And** extraction remains a prerequisite for new Content only.
+
 ## Epic 3: Run a Game Night with Guest Rooms
 
 The Host can start a Session for a ready Game, display a scannable QR Room, and end the Session. Guests can anonymously access a mobile-optimized Room with local Published Content and receive the ended-state notice in real time.
