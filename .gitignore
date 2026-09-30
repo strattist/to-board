@@ -33,3 +33,11 @@ tests/.data/
 .test-data/
 data/
 uv.lock
+
+# Installed agent skills (recreate from skills-lock.json)
+.claude/skills/
+
+# Local tool state
+.aws/
+.codex/
+.pytest_cache/
