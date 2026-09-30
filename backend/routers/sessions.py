@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -18,8 +19,13 @@ class SessionUpdate(BaseModel):
     players: Optional[list[str]] = Field(default=None, max_length=12)
     outcomes: Optional[list[str]] = Field(default=None, max_length=20)
 
+def utc_iso(value: datetime | None) -> str | None:
+    if value is None: return None
+    if value.tzinfo is None: value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
 def serialize(record: GameSession) -> dict:
-    return {'id': record.id, 'game_id': record.game_id, 'game_title_snapshot': record.game_title_snapshot, 'room_slug': record.room_slug, 'started_at': record.started_at, 'ended_at': record.ended_at, 'players': parse_json(record.players_json), 'outcomes': parse_json(record.outcomes_json), 'active': record.ended_at is None}
+    return {'id': record.id, 'game_id': record.game_id, 'game_title_snapshot': record.game_title_snapshot, 'room_slug': record.room_slug, 'started_at': utc_iso(record.started_at), 'ended_at': utc_iso(record.ended_at), 'players': parse_json(record.players_json), 'outcomes': parse_json(record.outcomes_json), 'active': record.ended_at is None}
 
 @router.get('')
 def list_sessions(game_id: str | None = None, session: Session = Depends(get_session), _host=Depends(require_host)):

@@ -2,10 +2,12 @@ import asyncio
 import os
 import base64
 import json
+import re
 import shutil
 import subprocess
+import threading
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -21,9 +23,11 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 from PIL import Image
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, delete, select
 from backend.main import app
 from backend.db.engine import engine
+from backend.db.init import initialize_database
 from backend.core.config import Settings, get_settings
 from backend.core.crypto import decrypt_api_key, encrypt_api_key
 from backend.services import games as games_service
@@ -2458,3 +2462,103 @@ def test_generation_still_requires_extraction_when_content_is_published():
             content = db.exec(select(Content).where(Content.game_id == game['id'])).one()
             assert content.published_quickstart_md == '# Start'
             assert content.published_cheat_sheet_md == '- Rule'
+
+
+def test_session_start_persists_identity_slug_and_utc_timestamp():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Wingspan Start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        assert response.status_code == 201
+        body = response.json()
+        assert str(UUID(body['id'])) == body['id']
+        assert body['game_title_snapshot'] == 'Wingspan Start'
+        assert re.fullmatch(r'wingspan-start-[0-9a-z]{4}', body['room_slug'])
+        started_at = datetime.fromisoformat(body['started_at'])
+        assert started_at.utcoffset() == timedelta(0)
+        assert body['ended_at'] is None
+        with Session(engine) as db:
+            record = db.get(GameSession, body['id'])
+            assert record.game_id == game['id']
+            assert record.room_slug == body['room_slug']
+
+
+def test_second_session_is_rejected_and_keeps_active_room():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'One at a time'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        first = client.post(f"/api/sessions?game_id={game['id']}").json()
+        second = client.post(f"/api/sessions?game_id={game['id']}")
+        assert second.status_code == 409
+        with Session(engine) as db:
+            rows = db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all()
+            assert [row.id for row in rows] == [first['id']]
+            assert rows[0].ended_at is None
+        room = client.get('/api/room/' + first['room_slug'])
+        assert room.status_code == 200
+        assert room.json()['ended'] is False
+
+
+def test_session_creation_requires_host():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Host only start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.post(f"/api/sessions?game_id={game['id']}").status_code == 401
+        finally:
+            settings.auth_disabled = previous
+        with Session(engine) as db:
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+
+
+def test_session_creation_failure_is_not_reported_as_success(monkeypatch):
+    with TestClient(app, raise_server_exceptions=False) as client:
+        game = client.post('/api/games', json={'title': 'Failing start'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+
+        def fail_commit(self):
+            raise OperationalError('COMMIT', {}, Exception('disk full'))
+
+        monkeypatch.setattr(Session, 'commit', fail_commit)
+        response = client.post(f"/api/sessions?game_id={game['id']}")
+        monkeypatch.undo()
+        assert response.status_code == 500
+        assert response.json() == {'detail': 'Session could not be saved. No Room was created.'}
+        with Session(engine) as db:
+            assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
+
+
+def test_concurrent_session_starts_create_one_active_session():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Race'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        barrier = threading.Barrier(6)
+        codes = []
+
+        def start():
+            barrier.wait()
+            codes.append(client.post(f"/api/sessions?game_id={game['id']}").status_code)
+
+        threads = [threading.Thread(target=start) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert codes.count(201) == 1
+        assert set(codes) == {201, 409}
+        with Session(engine) as db:
+            assert len(db.exec(select(GameSession).where(GameSession.game_id == game['id'], GameSession.ended_at.is_(None))).all()) == 1
+
+
+def test_active_session_index_is_added_to_an_existing_database():
+    with TestClient(app):
+        pass
+    with engine.begin() as conn:
+        conn.exec_driver_sql('DROP INDEX IF EXISTS ux_gamesession_one_active_per_game')
+    initialize_database()
+    with engine.connect() as conn:
+        names = [row[1] for row in conn.exec_driver_sql("PRAGMA index_list('gamesession')")]
+    assert 'ux_gamesession_one_active_per_game' in names
