@@ -2514,6 +2514,38 @@ def test_session_creation_requires_host():
             assert db.exec(select(GameSession).where(GameSession.game_id == game['id'])).all() == []
 
 
+def test_session_room_url_uses_app_base_url_and_strips_trailing_slash():
+    settings = get_settings()
+    previous = settings.app_base_url
+    try:
+        with TestClient(app) as client:
+            game = client.post('/api/games', json={'title': 'Room Url'}).json()
+            _publish_pair(game['id'], PipelineState.published)
+            settings.app_base_url = 'http://192.168.1.20/'
+            created = client.post(f"/api/sessions?game_id={game['id']}").json()
+            assert created['room_url'] == f"http://192.168.1.20/room/{created['room_slug']}"
+            fetched = client.get(f"/api/sessions/{created['id']}").json()
+            assert fetched['room_url'] == created['room_url']
+            settings.app_base_url = 'http://localhost'
+            assert client.get(f"/api/sessions/{created['id']}").json()['room_url'] == f"http://localhost/room/{created['room_slug']}"
+    finally:
+        settings.app_base_url = previous
+
+
+def test_session_get_requires_host():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Host only get'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        created = client.post(f"/api/sessions?game_id={game['id']}").json()
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.get(f"/api/sessions/{created['id']}").status_code == 401
+        finally:
+            settings.auth_disabled = previous
+
+
 def test_session_creation_failure_is_not_reported_as_success(monkeypatch):
     with TestClient(app, raise_server_exceptions=False) as client:
         game = client.post('/api/games', json={'title': 'Failing start'}).json()

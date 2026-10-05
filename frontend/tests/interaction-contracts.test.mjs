@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { activateLinkOnSpace } from '../src/lib/keyboard.js';
 import { createGameFlow } from '../src/lib/create-flow.js';
+import { createCopyController, exitPlan, loadReveal } from '../src/lib/qr-reveal-flow.ts';
 import { createDeleteController } from '../src/lib/delete-flow.ts';
-import { createGameWithCover, deleteGame, generateContent, getContent, getPreview, getSettings, publishContent, rejectContent, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
+import { createGameWithCover, deleteGame, generateContent, getContent, getPreview, getSession, getSettings, publishContent, rejectContent, startSession, updateSettings, uploadGameCover, uploadRulebook } from '../src/lib/api.ts';
 import { confirmRulebookReplacement, isPipelineBusy } from '../src/lib/rulebook-flow.js';
 import { createSettingsController } from '../src/lib/settings-flow.ts';
 import { canGenerate, confirmGeneration, generationConfirmation, shouldAllowLowQuality } from '../src/lib/generation-flow.js';
@@ -13,6 +14,7 @@ import { applyReviewResult, canActOnDraft, contentChangeAnnouncement, hasComplet
 const detailSource = readFileSync(new URL('../src/components/Detail.svelte', import.meta.url), 'utf8');
 const reviewSource = readFileSync(new URL('../src/components/Review.svelte', import.meta.url), 'utf8');
 const previewSource = readFileSync(new URL('../src/components/Preview.svelte', import.meta.url), 'utf8');
+const qrSource = readFileSync(new URL('../src/components/QRReveal.svelte', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const sidebarSource = readFileSync(new URL('../src/components/Sidebar.svelte', import.meta.url), 'utf8');
 const collectionSource = readFileSync(new URL('../src/components/Collection.svelte', import.meta.url), 'utf8');
@@ -341,6 +343,10 @@ assert.equal(request.path, '/api/sessions?game_id=game-1');
 assert.equal(request.options.method, 'POST');
 assert.equal(request.options.credentials, 'include');
 
+await getSession('session-1');
+assert.equal(request.path, '/api/sessions/session-1');
+assert.equal(request.options.credentials, 'include');
+
 await generateContent('game-1');
 assert.equal(request.path, '/api/games/game-1/generate');
 assert.equal(request.options.method, 'POST');
@@ -472,5 +478,64 @@ await assert.rejects(() => startSession('game-1'), /\/api\/sessions\?game_id=gam
 await assert.rejects(() => generateContent('game-1'), /\/api\/games\/game-1\/generate is unavailable/);
 await assert.rejects(() => getPreview('game-1'), /\/api\/games\/game-1\/preview is unavailable/);
 await assert.rejects(() => uploadGameCover('game-1', apiFile), /\/api\/games\/game-1\/cover is unavailable/);
+
+assert.match(qrSource, /QRCode\.toDataURL\(url, \{ width: 280/);
+assert.match(qrSource, /loadReveal\(id, getSession/);
+assert.doesNotMatch(qrSource, /location\.origin|history\.back/);
+assert.match(qrSource, /prefers-reduced-motion:reduce\)\{\.reveal,\.reveal\.leaving\{animation-duration:0ms/);
+assert.match(qrSource, /This session has ended\./);
+assert.match(qrSource, /role="alert"/);
+assert.match(qrSource, /event\.key === 'Escape'\) exit\(\)/);
+
+const qrSessionBase = { id: 's1', game_id: 'g1', game_title_snapshot: 'Wingspan', room_slug: 'wingspan-3f2a', room_url: 'http://192.168.1.20/room/wingspan-3f2a', active: true };
+const qrCalls = [];
+const makeQr = async (url) => { qrCalls.push(url); return 'data:qr'; };
+const activeState = await loadReveal('s1', async () => qrSessionBase, makeQr);
+assert.deepEqual(activeState, { view: 'active', session: qrSessionBase, qr: 'data:qr' });
+assert.deepEqual(qrCalls, [qrSessionBase.room_url]);
+const endedState = await loadReveal('s1', async () => ({ ...qrSessionBase, active: false }), makeQr);
+assert.equal(endedState.view, 'ended');
+assert.equal('qr' in endedState, false);
+const failedState = await loadReveal('s1', async () => { throw new Error('Session not found.'); }, makeQr);
+assert.deepEqual(failedState, { view: 'error', error: 'Session not found.' });
+assert.equal((await loadReveal('s1', async () => { throw 'boom'; }, makeQr)).error, 'This session could not be loaded.');
+assert.equal((await loadReveal('s1', async () => qrSessionBase, async () => { throw new Error('qr failed'); })).view, 'error');
+assert.equal(qrCalls.length, 1, 'ended and failed sessions never generate a QR');
+
+assert.deepEqual(exitPlan({ game_id: 'g1' }, false), { target: '/games/g1', delay: 300 });
+assert.deepEqual(exitPlan({ game_id: 'g1' }, true), { target: '/games/g1', delay: 0 });
+
+const makeCopy = (clipboard) => {
+  const log = { copied: [], errors: [], timers: [], cleared: 0, written: [] };
+  const controller = createCopyController({
+    clipboard: clipboard && { writeText: async (text) => { log.written.push(text); if (clipboard === 'fail') throw new Error('denied'); } },
+    setTimer: (fn, ms) => { log.timers.push({ fn, ms }); return log.timers.length; },
+    clearTimer: () => { log.cleared += 1; },
+    onCopied: (value) => log.copied.push(value),
+    onError: (value) => log.errors.push(value),
+  });
+  return { controller, log };
+};
+const okCopy = makeCopy('ok');
+assert.equal(await okCopy.controller.copy(qrSessionBase.room_url), true);
+assert.deepEqual(okCopy.log.written, [qrSessionBase.room_url]);
+assert.deepEqual(okCopy.log.copied, [true]);
+assert.equal(okCopy.log.timers.length, 1);
+assert.equal(okCopy.log.timers[0].ms, 1500);
+okCopy.log.timers[0].fn();
+assert.deepEqual(okCopy.log.copied, [true, false]);
+assert.equal(okCopy.log.errors.at(-1), '');
+for (const mode of ['fail', undefined]) {
+  const failing = makeCopy(mode);
+  assert.equal(await failing.controller.copy('url'), false);
+  assert.deepEqual(failing.log.copied, [false]);
+  assert.match(failing.log.errors.at(-1), /Could not copy/);
+  assert.equal(failing.log.timers.length, 0);
+}
+
+const qrBranches = qrSource.slice(qrSource.indexOf('{#if loading}'), qrSource.indexOf('<style>')).split('{:else if session}');
+assert.equal(qrBranches.length, 2);
+assert.doesNotMatch(qrBranches[0], /<img/, 'loading, error and ended states render no QR');
+assert.match(appSource, /<QRReveal id=\{segments\[1\]\} onNavigate=\{navigate\}\/>/);
 
 console.log('frontend interaction contracts passed');
