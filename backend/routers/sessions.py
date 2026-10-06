@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from backend.core.auth import require_host
+from backend.core.config import get_settings
 from backend.db.engine import get_session
 from backend.models import Content, Game, GameSession, PipelineState
 from backend.services.sessions import create_session, end_session, parse_json, update_metadata
@@ -25,7 +26,7 @@ def utc_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat()
 
 def serialize(record: GameSession) -> dict:
-    return {'id': record.id, 'game_id': record.game_id, 'game_title_snapshot': record.game_title_snapshot, 'room_slug': record.room_slug, 'started_at': utc_iso(record.started_at), 'ended_at': utc_iso(record.ended_at), 'players': parse_json(record.players_json), 'outcomes': parse_json(record.outcomes_json), 'active': record.ended_at is None}
+    return {'id': record.id, 'game_id': record.game_id, 'game_title_snapshot': record.game_title_snapshot, 'room_slug': record.room_slug, 'started_at': utc_iso(record.started_at), 'ended_at': utc_iso(record.ended_at), 'players': parse_json(record.players_json), 'outcomes': parse_json(record.outcomes_json), 'active': record.ended_at is None, 'room_url': f"{get_settings().app_base_url.rstrip('/')}/room/{record.room_slug}"}
 
 @router.get('')
 def list_sessions(game_id: str | None = None, session: Session = Depends(get_session), _host=Depends(require_host)):
