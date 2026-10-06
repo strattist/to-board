@@ -2594,3 +2594,44 @@ def test_active_session_index_is_added_to_an_existing_database():
     with engine.connect() as conn:
         names = [row[1] for row in conn.exec_driver_sql("PRAGMA index_list('gamesession')")]
     assert 'ux_gamesession_one_active_per_game' in names
+
+
+def test_room_unknown_slug_is_not_found_without_content():
+    with TestClient(app) as client:
+        response = client.get('/api/room/no-such-room-0000')
+        assert response.status_code == 404
+        assert set(response.json()) == {'detail'}
+        assert client.get('/api/room/no-such-room-0000/events').status_code == 404
+
+
+def test_room_never_exposes_draft_content_and_ended_room_hides_published():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Draft Guard'}).json()
+        with Session(engine) as db:
+            content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
+            content.pipeline_state = PipelineState.draft
+            content.prior_pipeline_state = PipelineState.published
+            content.published_quickstart_md = '# Published'
+            content.published_cheat_sheet_md = '- Published rule'
+            content.draft_quickstart_md = '# SECRET DRAFT'
+            content.draft_cheat_sheet_md = '- SECRET DRAFT'
+            db.add(content)
+            db.commit()
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        room = client.get('/api/room/' + started['room_slug'])
+        assert room.status_code == 200
+        assert 'SECRET DRAFT' not in room.text
+        assert room.json()['quickstart_md'] == '# Published'
+        assert client.post('/api/sessions/' + started['id'] + '/end').status_code == 200
+        ended = client.get('/api/room/' + started['room_slug'])
+        assert ended.status_code == 200
+        assert ended.json() == {'ended': True, 'game_title': 'Draft Guard', 'room_slug': started['room_slug']}
+        assert client.get('/api/room/' + started['room_slug'] + '/events').text == 'event: session-ended\ndata: {}\n\n'
+
+
+def test_guest_ip_is_not_logged_by_the_stack():
+    root = Path(__file__).resolve().parent.parent
+    assert '--no-access-log' in (root / 'backend/Dockerfile').read_text()
+    nginx = (root / 'nginx/nginx.conf').read_text()
+    assert 'access_log off;' in nginx
+    assert 'proxy_buffering off;' in nginx

@@ -539,3 +539,9 @@ assert.doesNotMatch(qrBranches[0], /<img/, 'loading, error and ended states rend
 assert.match(appSource, /<QRReveal id=\{segments\[1\]\} onNavigate=\{navigate\}\/>/);
 
 console.log('frontend interaction contracts passed');
+
+const roomSource = readFileSync(new URL('../src/components/RoomPage.svelte', import.meta.url), 'utf8');
+assert.match(roomSource, /if\(!r\.ok\)throw/);
+assert.match(roomSource, /unavailable=true/);
+assert.match(roomSource, /This room is not available\./);
+assert.doesNotMatch(roomSource, /localStorage|sessionStorage|document\.cookie|<input/);
