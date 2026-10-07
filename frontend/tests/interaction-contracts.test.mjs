@@ -541,7 +541,18 @@ assert.match(appSource, /<QRReveal id=\{segments\[1\]\} onNavigate=\{navigate\}\
 console.log('frontend interaction contracts passed');
 
 const roomSource = readFileSync(new URL('../src/components/RoomPage.svelte', import.meta.url), 'utf8');
-assert.match(roomSource, /if\(!r\.ok\)throw/);
-assert.match(roomSource, /unavailable=true/);
+assert.match(roomSource, /if \(!r\.ok\) throw/);
+assert.match(roomSource, /unavailable = true/);
 assert.match(roomSource, /This room is not available\./);
 assert.doesNotMatch(roomSource, /localStorage|sessionStorage|document\.cookie|<input/);
+assert.match(roomSource, /max-width: 640px/);
+assert.match(roomSource, /min-height: 44px/);
+assert.match(roomSource, /position: sticky/);
+assert.match(roomSource, /role="tablist"/);
+assert.match(roomSource, /:focus-visible/);
+assert.match(roomSource, /overflow-wrap: anywhere/);
+assert.doesNotMatch(roomSource, /overflow-x\s*:\s*(auto|scroll)/);
+const markdownSource = readFileSync(new URL('../src/lib/Markdown.svelte', import.meta.url), 'utf8');
+assert.match(markdownSource, /overflow-wrap: anywhere/);
+assert.match(markdownSource, /max-width: 100%/);
+assert.doesNotMatch(markdownSource, /overflow-x\s*:\s*(auto|scroll)/);

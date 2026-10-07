@@ -80,5 +80,8 @@ jobs:
       - name: Run frontend interaction contracts
         run: npm run test:contracts
 
+      - name: Run frontend DOM tests
+        run: npm run test:dom
+
       - name: Build frontend
         run: npm run build
