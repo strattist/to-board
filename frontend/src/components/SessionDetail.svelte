@@ -86,7 +86,7 @@
   {#if session}
     <h1 tabindex="-1" bind:this={heading}>{session.game_title_snapshot}</h1>
     <p class="muted">{new Date(session.started_at).toLocaleString()} · {session.active ? 'Active' : 'Ended'}</p>
-    {#if session.active}<button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
+    {#if session.active}<a class="qr-link" href={'/session/' + session.id}>Show QR</a><button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
     {#if endError}<p role="alert" class="error">{endError}</p>{/if}
     <label>Players<input bind:value={players} placeholder="Alex, Camille, Jordan"/></label>
     <label>Outcomes<textarea bind:value={outcomes} placeholder="Jordan won"></textarea></label>
@@ -113,6 +113,7 @@
   .page h1{font-size:32px;margin-bottom:0}
   .page h1:focus{outline:none}
   .muted{color:#6d6d6d}
+  .qr-link{display:inline-flex;align-items:center;min-height:44px;width:max-content;color:#a277ff}
   .error{color:#ff6767;margin:0}
   .page label{display:flex;flex-direction:column;gap:8px}
   .page input,.page textarea{background:#1e1c27;border:1px solid #29263c;color:#edecee;padding:10px}

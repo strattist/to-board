@@ -26,17 +26,17 @@ cp .env.example .env
 For a local, unauthenticated example, edit `.env` to use:
 
 ```dotenv
-SECRET_KEY=replace-with-a-long-random-value
+SECRET_KEY=replace-with-a-fernet-key
 AUTH_DISABLED=true
 APP_BASE_URL=http://localhost
 TO_BOARD_DB_DATASET=./data/db
 TO_BOARD_UPLOADS_DATASET=./data/uploads
 ```
 
-Generate a suitable secret instead of using the example value:
+`SECRET_KEY` must be a Fernet key (URL-safe base64 of 32 bytes). Generate one instead of using the example value:
 
 ```bash
-openssl rand -hex 32
+openssl rand -base64 32 | tr '+/' '-_'
 ```
 
 Set the output as `SECRET_KEY` in `.env`. `AUTH_DISABLED=true` is for local development only. In a deployed instance, set it to `false` and configure `AUTHENTIK_ISSUER`.
@@ -154,7 +154,7 @@ The backend and frontend can also be run separately during development.
 Start the backend from the repository root:
 
 ```bash
-export SECRET_KEY="$(openssl rand -hex 32)"
+export SECRET_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
 export AUTH_DISABLED=true
 export DB_PATH="$PWD/data/db/to-board.db"
 export UPLOADS_PATH="$PWD/data/uploads"
@@ -176,5 +176,6 @@ Open the Vite URL printed in the terminal, normally <http://localhost:5173/>. Th
 
 - Keep `AUTH_DISABLED=false` outside local development and configure Authentik OIDC with `AUTHENTIK_ISSUER`.
 - Use named host datasets for `TO_BOARD_DB_DATASET` and `TO_BOARD_UPLOADS_DATASET`; do not rely on Docker-managed volumes for persistent data.
+- Run exactly one `api` replica with one uvicorn worker. Guest session-ended notifications use in-process memory; extra workers or replicas would stop Guests from being told the Session ended.
 - Keep Guest Room access restricted to the intended LAN or reverse-proxy network.
 - Do not commit `.env`; it contains deployment secrets and configuration.

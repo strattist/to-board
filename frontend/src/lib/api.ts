@@ -31,6 +31,7 @@ export const uploadRulebook = (gameId: string, file: File) => {
 export const deleteGame = (gameId: string) => api<void>(`/api/games/${gameId}`, { method: 'DELETE' });
 export const getSession = (id: string) => api<Session>(`/api/sessions/${encodeURIComponent(id)}`);
 export const getGame = (id: string) => api<Game>(`/api/games/${encodeURIComponent(id)}`);
+export const getActiveSession = async (gameId: string) => (await api<Session[]>(`/api/sessions?game_id=${encodeURIComponent(gameId)}`)).find((item) => item.active) ?? null;
 export const startSession = (gameId: string) => api<Session>(`/api/sessions?game_id=${encodeURIComponent(gameId)}`, { method: 'POST' });
 export const generateContent = (gameId: string, allowLowQuality = false) => api<Game>(`/api/games/${gameId}/generate`, {
   method: 'POST',

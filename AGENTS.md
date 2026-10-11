@@ -55,6 +55,7 @@ Run the frontend checks and build:
 ```bash
 npm --prefix frontend run check
 npm --prefix frontend run test:contracts
+npm --prefix frontend run test:dom
 npm --prefix frontend run build
 ```
 
@@ -64,8 +65,16 @@ To verify the deployed stack locally, prepare `.env` and the bind-mounted data d
 
 - Host authentication: Authentik OIDC SSO — to-board has no login screen. Unauthenticated requests to Host routes redirect to Authentik. Guest routes (`/room/:slug`) require no authentication.
 - Real-time session-end notification: SSE. Not polling, not WebSocket (decided — see FR-14).
+- Single API worker: the `api` container runs one uvicorn process, and open Guest SSE connections live in that process's memory (`backend/routers/room.py`). Do not add uvicorn/gunicorn workers or scale the `api` service without first moving that state to a shared channel; Guests would silently stop receiving `session-ended`.
 - PDF rendering: PDF.js. Never the browser's native PDF plugin — viewer controls must work consistently across browsers (FR-3).
 - Guest Room must render without horizontal scroll at 375px viewport (iPhone SE baseline — FR-13).
+
+## Story process
+
+- One story per branch and PR; every commit subject names the story id (`(Story 3.5)`) or uses `chore:`/`fix:`. Keep config or harness changes off story branches unless they are part of the story.
+- Every story has a spec artifact in `_bmad-output/implementation-artifacts/` before it is marked `done`.
+- An acceptance criterion that is dropped or changed is recorded in the story spec and in `deferred-work.md` (or reconciled in `epics.md`) before the story is marked `done`; a commit message alone is not a record.
+- Remove an entry from `deferred-work.md` when the story that resolves it ships.
 
 ## Git
 
