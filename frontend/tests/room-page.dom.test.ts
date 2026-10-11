@@ -102,6 +102,23 @@ describe('RoomPage', () => {
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });
 
+  it('announces the ended state through a live region mounted before the change', async () => {
+    mockFetch(ok(room));
+    render(RoomPage, { slug: 'x' });
+    await screen.findByRole('tab', { name: 'Cheat Sheet' });
+    const region = screen.getByRole('status');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region.textContent).toBe('');
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    FakeEventSource.instances[0].listeners['session-ended']();
+    await waitFor(() => expect(region).toHaveTextContent('This session has ended.'));
+    expect(screen.getByRole('status')).toBe(region);
+    expect(screen.queryByText(/Quick text/)).toBeNull();
+    expect(screen.queryByText('Cheat text')).toBeNull();
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Wingspan' })).toBeInTheDocument();
+  });
+
   it('uses no storage or cookies', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     mockFetch(ok(room));

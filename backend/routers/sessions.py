@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,7 @@ from backend.models import Content, Game, GameSession, PipelineState
 from backend.services.sessions import create_session, end_session, parse_json, update_metadata
 from backend.routers.room import notify_session_ended
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/sessions', tags=['sessions'])
 
 class SessionCreate(BaseModel):
@@ -61,6 +63,7 @@ def update_session_record(session_id: str, body: SessionUpdate, session: Session
 def close_session(session_id: str, session: Session = Depends(get_session), _host=Depends(require_host)):
     record = session.get(GameSession, session_id)
     if not record: raise HTTPException(404, 'Session not found.')
-    end_session(record); session.add(record); session.commit(); session.refresh(record)
-    notify_session_ended(record.room_slug)
+    if end_session(session, record):
+        try: notify_session_ended(record.room_slug)
+        except Exception: logger.exception('Guests of Room %s could not be notified', record.room_slug)
     return serialize(record)

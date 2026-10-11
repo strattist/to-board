@@ -3,6 +3,7 @@ import logging
 import secrets
 from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import update
 from sqlmodel import Session, select
 from fastapi import HTTPException
 from backend.models import Content, Game, GameSession
@@ -59,6 +60,18 @@ def update_metadata(record: GameSession, players: list[str] | None, outcomes: li
     if outcomes is not None:
         record.outcomes_json = json.dumps(outcomes)
 
-def end_session(record: GameSession):
-    if record.ended_at is None:
-        record.ended_at = datetime.now(timezone.utc)
+def end_session(session: Session, record: GameSession) -> bool:
+    """Persist the end of a Session. Returns True only when this call changed it."""
+    if record.ended_at is not None:
+        return False
+    session_id = record.id
+    try:
+        # Conditional update: of two concurrent end requests, exactly one wins and notifies.
+        result = session.exec(update(GameSession).where(GameSession.id == session_id, GameSession.ended_at.is_(None)).values(ended_at=datetime.now(timezone.utc)))
+        session.commit()
+        session.refresh(record)
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception('Session %s could not be ended', session_id)
+        raise HTTPException(status_code=500, detail='Session could not be ended. The Room is still open.') from exc
+    return result.rowcount == 1
