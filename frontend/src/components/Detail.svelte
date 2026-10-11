@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { deleteGame, generateContent, startSession, uploadGameCover, uploadRulebook as uploadRulebookRequest } from '../lib/api';
+  import { deleteGame, generateContent, getActiveSession, startSession, uploadGameCover, uploadRulebook as uploadRulebookRequest } from '../lib/api';
   import { createDeleteController } from '../lib/delete-flow';
   import { canGenerate, confirmGeneration, shouldAllowLowQuality } from '../lib/generation-flow.js';
   import { confirmRulebookReplacement, isPipelineBusy } from '../lib/rulebook-flow.js';
@@ -15,6 +15,8 @@
   let uploadStatus = '';
   let coverBusy = false;
   let sessionBusy = false;
+  let activeSessionId = '';
+  let activeLookupFor = '';
   let generateBusy = false;
   let generationConfirmBusy = false;
   let allowLowQuality = false;
@@ -71,6 +73,16 @@
   $: contentActionReason = !hasPublishedContent
     ? 'Published Content is required before starting a session or opening Preview.'
     : '';
+
+  // The Host can always return to a running Session's QR Reveal; a second Start would only 409.
+  $: if (game?.id && game.id !== activeLookupFor) {
+    const gameId = game.id;
+    activeLookupFor = gameId;
+    activeSessionId = '';
+    getActiveSession(gameId)
+      .then((active) => { if (activeLookupFor === gameId) activeSessionId = active?.id ?? ''; })
+      .catch(() => {});
+  }
 
   function errorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
@@ -237,7 +249,11 @@
     <div class="head">
       <div><h1 id="game-title" tabindex="-1">{game.title}</h1><StatusBadge state={game.pipeline_state} warning={extractionWarning}/></div>
       <div class="actions">
-        <button class="primary" disabled={!hasPublishedContent || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
+        {#if activeSessionId}
+          <button class="primary" on:click={() => onNavigate(`/session/${activeSessionId}`)}>Show QR</button>
+        {:else}
+          <button class="primary" disabled={!hasPublishedContent || sessionBusy} aria-busy={sessionBusy} on:click={startGameSession}>{sessionBusy ? 'Starting…' : 'Start session'}</button>
+        {/if}
         <button class="button" disabled={!hasPublishedContent} on:click={openPreview}>Preview</button>
       </div>
     </div>

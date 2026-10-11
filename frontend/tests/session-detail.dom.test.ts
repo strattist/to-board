@@ -16,6 +16,16 @@ const endCalls = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.filter((c) => c
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('SessionDetail end flow', () => {
+  it('links an active Session back to its QR Reveal and hides the link once ended', async () => {
+    mockApi(() => res(ended));
+    render(SessionDetail, { id: 's1' });
+    expect(await screen.findByRole('link', { name: 'Show QR' })).toHaveAttribute('href', '/session/s1');
+    await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'End session' }));
+    await waitFor(() => expect(screen.getByText(/Ended/)).toBeInTheDocument());
+    expect(screen.queryByRole('link', { name: 'Show QR' })).toBeNull();
+  });
+
   it('opens a destructive confirmation and Cancel changes nothing', async () => {
     const fn = mockApi(() => res(ended));
     render(SessionDetail, { id: 's1' });
