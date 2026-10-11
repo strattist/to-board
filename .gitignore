@@ -41,3 +41,4 @@ uv.lock
 .aws/
 .codex/
 .pytest_cache/
+.claude/
