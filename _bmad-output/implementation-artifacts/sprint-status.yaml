@@ -1,0 +1,149 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 09-20-2026 21:31
+last_updated: 10-11-2026 22:28
+project: to-board
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: done
+  1-1-create-and-browse-game-entries: done
+  1-2-upload-and-replace-a-game-rulebook: done
+  1-3-view-a-rulebook-independently: done
+  1-4-delete-a-game-safely: done
+  1-5-implement-the-host-collection-and-game-detail-experience: done
+  epic-1-retrospective: optional
+
+  epic-2: done
+  2-1-configure-and-protect-the-llm-provider: done
+  2-2-extract-rulebook-text-locally: done
+  2-3-generate-draft-content-from-a-rulebook: done
+  2-4-review-reject-and-publish-draft-content: done
+  2-5-preview-published-content-without-a-session: done
+  2-6-add-openai-as-a-supported-provider: done
+  2-7-make-rulebook-extraction-optional-to-start-a-session: done
+  epic-2-retrospective: done
+
+  epic-3: in-progress
+  3-1-start-a-session-for-a-ready-game: done
+  3-2-reveal-and-share-a-session-qr-room: done
+  3-3-access-the-guest-room-anonymously: done
+  3-4-use-the-mobile-guest-room: done
+  3-5-end-a-session-and-notify-guests: done
+  epic-3-retrospective: done
+
+  epic-4: backlog
+  4-1-persist-session-records-reliably: backlog
+  4-2-record-players-and-outcomes: backlog
+  4-3-browse-and-filter-session-history: backlog
+  4-4-present-a-durable-session-history-experience: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-host-auth-and-review-hardening: backlog
+  epic-5-retrospective: optional
+action_items:
+  - id: "epic-2-retro-item-8-split-tests-test_app-py-by-domain-low-pr"
+    epic: 2
+    action: "Split tests/test_app.py by domain (low priority)"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-30.md"
+  - id: "epic-2-retro-item-9-protect-local-tracking-files-sprint-stat"
+    epic: 2
+    action: "Protect local tracking files sprint-status.yaml and deferred-work.md
+      now that implementation-artifacts is gitignored"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-30.md"
+  - id: "epic-3-retro-item-10-reconcile-spec-remove-story-3-3-alias-pr"
+    epic: 3
+    action: "Reconcile spec: remove Story 3.3 alias/presence ACs from epics.md and
+      epic-3-context.md (NFR-7 decision)"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-11-give-the-host-a-way-back-to-qr-reveal-li"
+    epic: 3
+    action: "Give the Host a way back to QR Reveal: link from Session detail and show
+      View QR on Game Detail when a Session is active"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-12-close-sse-registration-gap-in-room_event"
+    epic: 3
+    action: "Close SSE registration gap in room_events: register queue before reading
+      ended_at, add test"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-13-prune-deferred-work-md-of-resolved-stale"
+    epic: 3
+    action: "Prune deferred-work.md of resolved/stale entries (QR APP_BASE_URL, ended-state
+      live region, Draft-replacement warning)"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-14-process-record-dropped-acs-in-the-story"
+    epic: 3
+    action: "Process: record dropped ACs in the story spec and deferred-work.md before
+      marking done; create spec artifacts for every story"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-15-process-story-id-or-chore-in-every-commi"
+    epic: 3
+    action: "Process: story id or chore: in every commit subject; keep infra/config
+      commits off story branches; _bmad/ changes only via BMad skill"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-16-add-npm-prefix-frontend-run-test-dom-to"
+    epic: 3
+    action: "Add npm --prefix frontend run test:dom to AGENTS.md Running and verifying"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-17-before-epic-4-resolve-worker-topology-fe"
+    epic: 3
+    action: "Before Epic 4: resolve worker topology, Fernet README fix, and test_app.py
+      split"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-3-retro-item-18-verify-sse-through-nginx-once-on-the-tru"
+    epic: 3
+    action: "Verify SSE through nginx once on the TrueNAS stack and record NFR-1 Room
+      load time"
+    owner: "Baptiste"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"

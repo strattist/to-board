@@ -702,27 +702,17 @@ So that Guests can join the Session with any phone camera or by typing the URL.
 ### Story 3.3: Access the Guest Room Anonymously
 
 As a Guest,
-I want to open the active Room from a QR code or URL and optionally choose an alias,
-So that I can consult the game reference and be identifiable to other people at the table without creating an account.
+I want to open the active Room from a QR code or URL,
+So that I can consult the game reference without creating an account or being identified.
 
 **Acceptance Criteria:**
 
 **Given** a Session is active and has Published Content  
 **When** I open its Room URL  
 **Then** the Room loads without authentication, account creation, app installation, push-notification prompts, or cookie-consent banners  
-**And** the Guest may enter an alias before viewing the Room  
 **And** the response is served from the local application.
 
-**Given** a Guest enters an alias  
-**When** the alias is submitted  
-**Then** the alias is visible to the Host and other Guests in the active Room  
-**And** it is held only in memory for the active Room connection  
-**And** it is not written to SQLite, browser storage, cookies, logs, analytics, or external services.
-
-**Given** a Guest leaves or refreshes the Room  
-**When** the prior connection ends  
-**Then** its alias is removed from the active in-memory presence list  
-**And** the Guest must enter it again if the Room requires a new connection.
+<!-- Reconciled in the Epic 3 retrospective (2026-10-11): optional Guest aliases and the in-memory presence list were dropped to keep NFR-7 strict (no Guest identity of any kind is collected or held). -->
 
 **Given** I am viewing an active Room  
 **When** the page renders  
