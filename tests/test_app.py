@@ -8,6 +8,7 @@ import subprocess
 import threading
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.exc import SQLAlchemyError
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -2635,3 +2636,124 @@ def test_guest_ip_is_not_logged_by_the_stack():
     nginx = (root / 'nginx/nginx.conf').read_text()
     assert 'access_log off;' in nginx
     assert 'proxy_buffering off;' in nginx
+
+
+def _published_game(client, title):
+    game = client.post('/api/games', json={'title': title}).json()
+    with Session(engine) as db:
+        content = db.exec(select(Content).where(Content.game_id == game['id'])).first()
+        content.pipeline_state = PipelineState.published
+        content.published_quickstart_md = '# Start'
+        content.published_cheat_sheet_md = '- Rule'
+        db.add(content)
+        db.commit()
+    return game
+
+
+def test_end_session_sets_utc_ended_at_and_deactivates_room():
+    with TestClient(app) as client:
+        game = _published_game(client, 'End Persist')
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        ended = client.post('/api/sessions/' + started['id'] + '/end')
+        assert ended.status_code == 200
+        body = ended.json()
+        assert body['active'] is False
+        assert datetime.fromisoformat(body['ended_at']).utcoffset() == timedelta(0)
+        with Session(engine) as db:
+            assert db.get(GameSession, started['id']).ended_at is not None
+        assert client.get('/api/room/' + started['room_slug']).json()['ended'] is True
+
+
+def test_end_session_notifies_connected_guests_once(monkeypatch):
+    sent = []
+    monkeypatch.setattr('backend.routers.sessions.notify_session_ended', lambda slug: sent.append(slug))
+    with TestClient(app) as client:
+        game = _published_game(client, 'End Notify')
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        first = client.post('/api/sessions/' + started['id'] + '/end').json()
+        second = client.post('/api/sessions/' + started['id'] + '/end')
+        assert second.status_code == 200
+        assert second.json()['ended_at'] == first['ended_at']
+        assert sent == [started['room_slug']]
+
+
+def test_end_session_failure_is_not_reported_as_ended(monkeypatch):
+    sent = []
+    monkeypatch.setattr('backend.routers.sessions.notify_session_ended', lambda slug: sent.append(slug))
+    with TestClient(app) as client:
+        game = _published_game(client, 'End Failure')
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+
+        def fail_commit(self):
+            raise SQLAlchemyError('disk full')
+
+        with monkeypatch.context() as patched:
+            patched.setattr(Session, 'commit', fail_commit)
+            failed = client.post('/api/sessions/' + started['id'] + '/end')
+        assert failed.status_code == 500
+        assert 'could not be ended' in failed.json()['detail']
+        assert sent == []
+        with Session(engine) as db:
+            assert db.get(GameSession, started['id']).ended_at is None
+        assert client.get('/api/room/' + started['room_slug']).json()['ended'] is False
+
+
+def test_end_session_unknown_id_is_not_found():
+    with TestClient(app) as client:
+        assert client.post('/api/sessions/does-not-exist/end').status_code == 404
+
+
+def test_end_session_requires_host():
+    with TestClient(app) as client:
+        game = _published_game(client, 'End Auth')
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.post('/api/sessions/' + started['id'] + '/end').status_code == 401
+        finally:
+            settings.auth_disabled = previous
+        with Session(engine) as db:
+            assert db.get(GameSession, started['id']).ended_at is None
+
+
+def test_end_session_delivers_session_ended_to_a_real_room_stream():
+    import asyncio, threading
+    from backend.routers import room as room_router
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        with TestClient(app) as client:
+            game = _published_game(client, 'End Stream')
+            started = client.post(f"/api/sessions?game_id={game['id']}").json()
+            queue = asyncio.run_coroutine_threadsafe(_make_queue(), loop).result(2)
+            room_router._connections[started['room_slug']].add((queue, loop))
+            assert client.post('/api/sessions/' + started['id'] + '/end').status_code == 200
+            event = asyncio.run_coroutine_threadsafe(queue.get(), loop).result(2)
+            assert event == 'event: session-ended\ndata: {}\n\n'
+            client.post('/api/sessions/' + started['id'] + '/end')
+            assert queue.empty()
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(2)
+        room_router._connections.clear()
+
+
+async def _make_queue():
+    import asyncio
+    return asyncio.Queue(maxsize=2)
+
+
+def test_end_session_notification_failure_does_not_undo_the_end(monkeypatch):
+    def boom(slug):
+        raise RuntimeError('stream registry broke')
+
+    monkeypatch.setattr('backend.routers.sessions.notify_session_ended', boom)
+    with TestClient(app) as client:
+        game = _published_game(client, 'End Notify Boom')
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        response = client.post('/api/sessions/' + started['id'] + '/end')
+        assert response.status_code == 200
+        assert response.json()['active'] is False

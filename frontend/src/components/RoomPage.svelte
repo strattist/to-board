@@ -51,32 +51,37 @@
 
 <main class="room">
   {#if unavailable}
-    <div class="ended" aria-live="polite"><p>This room is not available.</p><small>to-board</small></div>
-  {:else if room}
-    {#if ended}
-      <div class="ended" aria-live="polite"><h1>{room.game_title}</h1><p>This session has ended.</p><small>to-board</small></div>
-    {:else}
-      <header><h1>{room.game_title}</h1><span class="wordmark">to-board</span></header>
-      <div class="tabs" role="tablist" aria-label="Room content">
-        <button type="button" role="tab" id="tab-quickstart" aria-selected={tab === 'quickstart'} aria-controls="panel-quickstart" tabindex={tab === 'quickstart' ? 0 : -1} class:active={tab === 'quickstart'} on:click={() => (tab = 'quickstart')} on:keydown={onTabKey}>Quick-start Guide</button>
-        <button type="button" role="tab" id="tab-cheat" aria-selected={tab === 'cheat'} aria-controls="panel-cheat" tabindex={tab === 'cheat' ? 0 : -1} class:active={tab === 'cheat'} on:click={() => (tab = 'cheat')} on:keydown={onTabKey}>Cheat Sheet</button>
-      </div>
-      <div role="tabpanel" id="panel-quickstart" aria-labelledby="tab-quickstart" class="panel" hidden={tab !== 'quickstart'}><Markdown value={room.quickstart_md ?? ''} /></div>
-      <div role="tabpanel" id="panel-cheat" aria-labelledby="tab-cheat" class="panel" hidden={tab !== 'cheat'}><Markdown value={room.cheat_sheet_md ?? ''} /></div>
-    {/if}
+    <div class="unavailable" aria-live="polite"><p>This room is not available.</p><small>to-board</small></div>
+  {:else if room && !ended}
+    <header><h1>{room.game_title}</h1><span class="wordmark">to-board</span></header>
+    <div class="tabs" role="tablist" aria-label="Room content">
+      <button type="button" role="tab" id="tab-quickstart" aria-selected={tab === 'quickstart'} aria-controls="panel-quickstart" tabindex={tab === 'quickstart' ? 0 : -1} class:active={tab === 'quickstart'} on:click={() => (tab = 'quickstart')} on:keydown={onTabKey}>Quick-start Guide</button>
+      <button type="button" role="tab" id="tab-cheat" aria-selected={tab === 'cheat'} aria-controls="panel-cheat" tabindex={tab === 'cheat' ? 0 : -1} class:active={tab === 'cheat'} on:click={() => (tab = 'cheat')} on:keydown={onTabKey}>Cheat Sheet</button>
+    </div>
+    <div role="tabpanel" id="panel-quickstart" aria-labelledby="tab-quickstart" class="panel" hidden={tab !== 'quickstart'}><Markdown value={room.quickstart_md ?? ''} /></div>
+    <div role="tabpanel" id="panel-cheat" aria-labelledby="tab-cheat" class="panel" hidden={tab !== 'cheat'}><Markdown value={room.cheat_sheet_md ?? ''} /></div>
   {/if}
+  <!-- Persistent live region: mounted before the change so assistive tech announces the ended state. -->
+  <div class="ended" class:shown={ended && !!room && !unavailable}>
+    {#if ended && room && !unavailable}<h1>{room.game_title}</h1>{/if}
+    <p role="status" aria-live="polite">{ended && room && !unavailable ? 'This session has ended.' : ''}</p>
+    {#if ended && room && !unavailable}<small>to-board</small>{/if}
+  </div>
 </main>
 
 <style>
   .room { box-sizing: border-box; width: 100%; max-width: 640px; margin: 0 auto; padding: 0 20px; background: #15141b; color: #edecee; min-height: 100vh; overflow-wrap: anywhere; }
   header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 20px 0 8px; }
   h1 { font-size: 18px; margin: 0; min-width: 0; }
-  .wordmark, .ended small { color: #6d6d6d; font-size: 12px; }
+  .wordmark, .ended small, .unavailable small { color: #6d6d6d; font-size: 12px; }
   .tabs { display: flex; gap: 24px; position: sticky; top: 0; z-index: 1; background: #15141b; border-bottom: 1px solid #29263c; }
   .tabs button { min-height: 44px; min-width: 44px; padding: 0; background: transparent; color: #6d6d6d; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; }
   .tabs button.active { color: #a277ff; border-bottom-color: #a277ff; }
   .tabs button:focus-visible { outline: 2px solid #a277ff; outline-offset: 2px; }
   .panel { padding: 24px 0; }
   .panel[hidden] { display: none; }
-  .ended { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 80vh; text-align: center; }
+  .ended p { margin: 0; }
+  .ended:not(.shown) { display: contents; }
+  .ended.shown, .unavailable { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 80vh; text-align: center; }
+  .unavailable p { margin: 0; }
 </style>
