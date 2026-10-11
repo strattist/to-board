@@ -415,3 +415,56 @@ def test_room_stream_for_unknown_slug_leaves_no_registration():
     with TestClient(app) as client:
         assert client.get('/api/room/nope-0000/events').status_code == 404
     assert 'nope-0000' not in room_router._connections
+
+
+def _restart_application():
+    """Simulate an API container restart over the same database file."""
+    engine.dispose()
+    with TestClient(app):
+        pass
+
+
+def test_active_session_survives_an_api_restart_and_stays_active():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Restart active'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+
+    _restart_application()
+
+    with TestClient(app) as client:
+        reloaded = client.get(f"/api/sessions/{started['id']}").json()
+        for key in ('id', 'game_id', 'game_title_snapshot', 'room_slug', 'started_at'):
+            assert reloaded[key] == started[key]
+        assert reloaded['ended_at'] is None
+        assert reloaded['active'] is True
+        assert client.post(f"/api/sessions?game_id={game['id']}").status_code == 409
+        assert client.get(f"/api/room/{started['room_slug']}").json()['ended'] is False
+
+
+def test_ended_session_stays_ended_after_an_api_restart():
+    with TestClient(app) as client:
+        game = client.post('/api/games', json={'title': 'Restart ended'}).json()
+        _publish_pair(game['id'], PipelineState.published)
+        started = client.post(f"/api/sessions?game_id={game['id']}").json()
+        ended = client.post(f"/api/sessions/{started['id']}/end").json()
+
+    _restart_application()
+
+    with TestClient(app) as client:
+        reloaded = client.get(f"/api/sessions/{started['id']}").json()
+        assert reloaded['ended_at'] == ended['ended_at']
+        assert reloaded['active'] is False
+        assert client.get(f"/api/room/{started['room_slug']}").json()['ended'] is True
+
+
+def test_compose_persists_data_only_through_dataset_bind_mounts():
+    lines = Path('docker-compose.yml').read_text().splitlines()
+    assert not any(line.startswith('volumes:') for line in lines), 'top-level named volumes are Docker-managed'
+    bind_targets = []
+    for index, line in enumerate(lines):
+        if line.strip() == '- type: bind':
+            block = [item.strip() for item in lines[index + 1:index + 3]]
+            bind_targets.append(next(item for item in block if item.startswith('target:')).split(':', 1)[1].strip())
+    assert sorted(bind_targets) == ['/data/db', '/data/uploads']
+    assert not any(':/data/' in line for line in lines), 'short-form volume entries could name Docker-managed volumes'
