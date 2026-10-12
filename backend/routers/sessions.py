@@ -47,7 +47,7 @@ def serialize(record: GameSession) -> dict:
 
 @router.get('')
 def list_sessions(game_id: str | None = None, session: Session = Depends(get_session), _host=Depends(require_host)):
-    query = select(GameSession).order_by(GameSession.started_at.desc())
+    query = select(GameSession).order_by(GameSession.started_at.desc(), GameSession.id.desc())
     if game_id: query = query.where(GameSession.game_id == game_id)
     return [serialize(item) for item in session.exec(query).all()]
 
