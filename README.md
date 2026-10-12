@@ -172,6 +172,27 @@ npm run dev -- --host 0.0.0.0
 
 Open the Vite URL printed in the terminal, normally <http://localhost:5173/>. The Vite configuration proxies `/api` requests to the backend at `http://localhost:8000`.
 
+## Deploying to TrueNAS (GHCR + Watchtower)
+
+Releases are published as container images to GHCR and the NAS pulls them; GitHub never connects to the NAS.
+
+**Release.** Merge to `main`, then tag and push:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The `Release` workflow re-runs the CI checks, then pushes `ghcr.io/strattist/to-board-api` and `ghcr.io/strattist/to-board-web` tagged `0.1.0`, `0.1` and `latest`.
+
+**One-time NAS setup.**
+
+1. Create the two datasets and set `TO_BOARD_DB_DATASET` / `TO_BOARD_UPLOADS_DATASET` to their paths (never Docker volumes).
+2. Create a GitHub personal access token with only `read:packages`, then on the NAS run `docker login ghcr.io -u <github-user>` (this writes `~/.docker/config.json`). Skip this if the packages are made public.
+3. In Dockge/Portainer create a stack from `docker-compose.nas.yml` with a `.env` containing `SECRET_KEY`, `AUTHENTIK_ISSUER`, `APP_BASE_URL`, the two dataset paths, and `DOCKER_CONFIG_FILE` if the login file is not `/root/.docker/config.json`.
+4. Pick a free host port. TrueNAS itself uses 80/443, so the NAS stack defaults to `TO_BOARD_HTTP_PORT=8080`; change it if another service holds it. `APP_BASE_URL` must include the port (e.g. `http://192.168.1.10:8080`), and the same URL must be allowed as the redirect URI in Authentik.
+
+**Updates and rollback.** Watchtower checks hourly and recreates `api` and `web` when `latest` changes. To roll back or hold a version, set `TO_BOARD_VERSION=0.1.0` in the stack `.env` and redeploy. The stack uses the maintained `nickfedor/watchtower` fork (the original `containrrr/watchtower` is archived).
+
 ## Production notes
 
 - Keep `AUTH_DISABLED=false` outside local development and configure Authentik OIDC with `AUTHENTIK_ISSUER`.
