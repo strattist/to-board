@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { formatWhen } from '../lib/session-format';
   export let id = '';
   let session: any = null;
   let players = '';
@@ -7,10 +8,12 @@
   let message = '';
   let messageFailed = false;
   let loadError = '';
+  let loading = true;
   let confirmOpen = false;
   let ending = false;
   let endError = '';
   let heading: HTMLHeadingElement | undefined;
+  const SAVE_FAILED = 'Players and outcomes could not be saved. Your changes are still in the form.';
   const END_FAILED = 'Session could not be ended. The Room is still open.';
   let endButton: HTMLButtonElement | undefined;
   let cancelButton: HTMLButtonElement | undefined;
@@ -28,14 +31,16 @@
       outcomes = session.outcomes.join('\n');
     } catch (e) {
       loadError = e instanceof Error && e.message ? e.message : 'This session could not be loaded.';
+    } finally {
+      loading = false;
     }
   });
 
   async function save() {
     try {
       const r = await fetch('/api/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ players: players.split('\n').map((x) => x.trim()).filter(Boolean), outcomes: outcomes.split('\n').map((x) => x.trim()).filter(Boolean) }) });
-      if (r.ok) { session = await r.json(); message = 'Saved.'; messageFailed = false; } else { message = await detail(r, 'Could not save.'); messageFailed = true; }
-    } catch { message = 'Could not save.'; messageFailed = true; }
+      if (r.ok) { session = await r.json(); message = 'Players and outcomes saved.'; messageFailed = false; } else { message = await detail(r, SAVE_FAILED); messageFailed = true; }
+    } catch { message = SAVE_FAILED; messageFailed = true; }
   }
 
   async function openConfirm() {
@@ -83,12 +88,19 @@
 <svelte:window on:keydown={onKeydown} />
 
 <section class="page" inert={confirmOpen}><a href="/sessions">← Session Log</a>
+  {#if loading}<p role="status" aria-live="polite" class="muted">Loading session…</p>{/if}
   {#if loadError}<p role="alert" class="error">{loadError}</p>{/if}
   {#if session}
     <h1 tabindex="-1" bind:this={heading}>{session.game_title_snapshot}</h1>
-    <p class="muted">{new Date(session.started_at).toLocaleString()} · {session.active ? 'Active' : 'Ended'}</p>
+    <p class="muted">{formatWhen(session.started_at)} <span class="state" class:active={session.active}>{session.active ? 'Active' : 'Ended'}</span></p>
     {#if session.active}<a class="qr-link" href={'/session/' + session.id}>Show QR</a><button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
     {#if endError}<p role="alert" class="error">{endError}</p>{/if}
+    <div class="saved">
+      <h2>Saved players</h2>
+      {#if session.players.length > 0}<ul>{#each session.players as player}<li>{player}</li>{/each}</ul>{:else}<p class="muted">No players recorded.</p>{/if}
+      <h2>Saved outcomes</h2>
+      {#if session.outcomes.length > 0}<ol>{#each session.outcomes as outcome}<li>{outcome}</li>{/each}</ol>{:else}<p class="muted">No outcomes recorded.</p>{/if}
+    </div>
     <label>Players (one per line, up to 12)<textarea bind:value={players} on:input={() => (message = '')} placeholder="Alex&#10;Camille&#10;Jordan"></textarea></label>
     <label>Outcomes (one per line, in order, up to 20)<textarea bind:value={outcomes} on:input={() => (message = '')} placeholder="Jordan won"></textarea></label>
     <button type="button" class="primary" on:click={save}>Save</button>
@@ -113,7 +125,14 @@
   .page{padding:32px;max-width:700px;margin:auto;display:flex;flex-direction:column;gap:16px}
   .page h1{font-size:32px;margin-bottom:0}
   .page h1:focus{outline:none}
-  .muted{color:#6d6d6d}
+  .page{min-width:0;overflow-wrap:anywhere}
+  .page h2{font-size:18px;margin:0 0 8px}
+  .saved{background:#1e1c27;border:1px solid #29263c;border-radius:12px;padding:16px}
+  .saved ul,.saved ol{margin:0 0 16px;padding-left:24px}.saved p{margin:0 0 16px}
+  .state{display:inline-block;margin-left:6px;padding:1px 8px;border:1px solid #453b62;border-radius:999px;color:#edecee}
+  .state.active{border-color:#a277ff}
+  .page textarea{width:100%}
+  .muted{color:#9a97a8;margin:0}
   .qr-link{display:inline-flex;align-items:center;min-height:44px;width:max-content;color:#a277ff}
   .error{color:#ff6767;margin:0}
   .page label{display:flex;flex-direction:column;gap:8px}
