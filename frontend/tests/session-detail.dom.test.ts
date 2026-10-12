@@ -120,7 +120,7 @@ describe('SessionDetail players and outcomes', () => {
     await fireEvent.input(players, { target: { value: 'Smith, Jo\n\n Alex ' } });
     await fireEvent.input(screen.getByLabelText(/Outcomes/), { target: { value: 'Alex won\nJo won' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
+    expect(await screen.findByRole('status')).toHaveTextContent('Players and outcomes saved.');
     const patch = fn.mock.calls.find((c) => c[1]?.method === 'PATCH')!;
     expect(JSON.parse(patch[1]!.body as string)).toEqual({ players: ['Smith, Jo', 'Alex'], outcomes: ['Alex won', 'Jo won'] });
   });
@@ -150,5 +150,103 @@ describe('SessionDetail players and outcomes', () => {
     render(SessionDetail, { id: 's1' });
     expect(await screen.findByLabelText(/Players/)).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+});
+
+describe('SessionDetail presentation', () => {
+  it('shows an inline loading status that is replaced by the Session', async () => {
+    let resolve!: (v: unknown) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((r) => { resolve = r; })));
+    render(SessionDetail, { id: 's1' });
+    expect(screen.getByRole('status')).toHaveTextContent('Loading session');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    resolve({ ok: true, status: 200, json: () => Promise.resolve(active) });
+    expect(await screen.findByRole('heading', { name: 'Wingspan' })).toBeInTheDocument();
+    expect(screen.queryByText(/Loading session/)).toBeNull();
+  });
+
+  it('shows saved players and ordered outcomes read-only, with repeats, and updates after save', async () => {
+    const saved = { ...active, players: ['Alex'], outcomes: ['Alex won', 'Alex won'] };
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? res(saved) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    expect(await screen.findByText('No players recorded.')).toBeInTheDocument();
+    expect(screen.getByText('No outcomes recorded.')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Players and outcomes saved.');
+    const items = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(items).toEqual(['Alex', 'Alex won', 'Alex won']);
+  });
+
+  it('uses specific failure copy without exclamation marks and keeps the summary', async () => {
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? Promise.reject(new Error('offline')) : res({ ...active, players: ['Zoe'] }))));
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Players and outcomes could not be saved. Your changes are still in the form.');
+    expect(alert.textContent).not.toMatch(/!/);
+    expect(screen.getByText('Zoe', { selector: 'li' })).toBeInTheDocument();
+  });
+
+  it('states Active or Ended as text and never prints Invalid Date', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => res({ ...ended, started_at: 'not a date' })));
+    render(SessionDetail, { id: 's1' });
+    expect(await screen.findByText('Ended')).toBeInTheDocument();
+    expect(screen.getByText(/Unknown date/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Invalid Date/);
+  });
+});
+
+describe('SessionDetail hardening', () => {
+  it('keeps the page chrome visible while loading and offers Try again after a load failure', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(() => (++calls === 1 ? res({ detail: 'This session could not be loaded.' }, false, 500) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    expect(screen.getByRole('link', { name: /Session Log/ })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be loaded');
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Wingspan' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('sends one PATCH while a save is pending and disables Save', async () => {
+    let resolve!: (v: unknown) => void;
+    const fn = vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? new Promise((r) => { resolve = r; }) : res(active)));
+    vi.stubGlobal('fetch', fn);
+    render(SessionDetail, { id: 's1' });
+    const save = await screen.findByRole('button', { name: 'Save' });
+    await fireEvent.click(save);
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Saving…' }));
+    expect(fn.mock.calls.filter((c) => c[1]?.method === 'PATCH')).toHaveLength(1);
+    resolve({ ok: true, status: 200, json: () => Promise.resolve(active) });
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  it('re-seeds the form from the normalized saved values', async () => {
+    const saved = { ...active, players: ['Alex'], outcomes: ['Alex won'] };
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? res(saved) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.input(await screen.findByLabelText(/Players/), { target: { value: '  Alex  \n\n' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Players and outcomes saved.');
+    expect(screen.getByLabelText(/Players/)).toHaveValue('Alex');
+    expect(screen.getByRole('status').textContent).not.toMatch(/!/);
+  });
+
+  it('reports a saved Session whose response cannot be read without claiming failure', async () => {
+    const bad = { ok: true, status: 200, json: () => Promise.reject(new Error('bad json')) };
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? Promise.resolve(bad) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('were saved, but the summary could not be refreshed');
+  });
+
+  it('loads the new Session when the id changes', async () => {
+    const fn = vi.fn((url: string) => res(url.endsWith('/s2') ? { ...active, id: 's2', game_title_snapshot: 'Azul' } : active));
+    vi.stubGlobal('fetch', fn);
+    const { rerender } = render(SessionDetail, { id: 's1' });
+    await screen.findByRole('heading', { name: 'Wingspan' });
+    await rerender({ id: 's2' });
+    expect(await screen.findByRole('heading', { name: 'Azul' })).toBeInTheDocument();
   });
 });

@@ -107,3 +107,32 @@ describe('Session Log', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Session history could not be loaded.');
   });
 });
+
+describe('Session Log presentation', () => {
+  it('shows a skeleton hidden from assistive tech plus an inline status while loading', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const { container } = render(SessionPages);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading sessions');
+    expect(container.querySelector('.skeleton')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('states Active and Ended as text in each row', async () => {
+    mockApi(() => res([newer, older]));
+    render(SessionPages);
+    await screen.findByText('Deleted Game', { selector: 'strong' });
+    expect(screen.getByText('Ended')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+  });
+
+  it('keeps the heading visible while loading and never prints Invalid Date', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(SessionPages);
+    expect(screen.getByRole('heading', { name: 'Session Log' })).toBeInTheDocument();
+    cleanup();
+    mockApi(() => res([{ ...older, started_at: 'not a date' }]));
+    render(SessionPages);
+    expect(await screen.findByText(/Unknown date/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Invalid Date/);
+  });
+});
