@@ -602,3 +602,61 @@ def test_ended_guest_room_payload_carries_no_players_or_outcomes():
         client.post(url + '/end')
         room = client.get('/api/room/' + started['room_slug']).json()
         assert set(room) == {'ended', 'game_title', 'room_slug'}
+
+
+def _seed_sessions(rows):
+    with Session(engine) as db:
+        for row in rows:
+            db.add(GameSession(**row))
+        db.commit()
+
+
+def test_session_list_is_newest_first_with_a_stable_tie_break():
+    with TestClient(app) as client:
+        game = _published_game(client, 'Log order')
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        tag = uuid4().hex[:6]
+        _seed_sessions([
+            {'id': f'{tag}-a', 'game_id': game['id'], 'game_title_snapshot': 'Log order', 'room_slug': f'{tag}-a', 'started_at': base, 'ended_at': base + timedelta(hours=1)},
+            {'id': f'{tag}-c', 'game_id': game['id'], 'game_title_snapshot': 'Log order', 'room_slug': f'{tag}-c', 'started_at': base + timedelta(days=1), 'ended_at': base + timedelta(days=1, hours=1)},
+            {'id': f'{tag}-b', 'game_id': game['id'], 'game_title_snapshot': 'Log order', 'room_slug': f'{tag}-b', 'started_at': base, 'ended_at': base + timedelta(hours=2)},
+        ])
+        ids = [item['id'] for item in client.get(f"/api/sessions?game_id={game['id']}").json()]
+        assert ids == [f'{tag}-c', f'{tag}-b', f'{tag}-a']
+
+
+def test_session_list_filters_by_game_and_keeps_repeated_outcomes_in_order():
+    with TestClient(app) as client:
+        first = _started_session(client, 'Filter one')
+        second = _started_session(client, 'Filter two')
+        outcomes = ['Alex won', 'Jo won', 'Alex won']
+        assert client.patch(f"/api/sessions/{first['id']}", json={'players': ['Alex', 'Jo'], 'outcomes': outcomes}).status_code == 200
+        filtered = client.get(f"/api/sessions?game_id={first['game_id']}").json()
+        assert [item['id'] for item in filtered] == [first['id']]
+        assert filtered[0]['outcomes'] == outcomes and filtered[0]['players'] == ['Alex', 'Jo']
+        everything = [item['id'] for item in client.get('/api/sessions').json()]
+        assert first['id'] in everything and second['id'] in everything
+        assert client.get('/api/sessions?game_id=no-such-game').json() == []
+
+
+def test_session_history_of_a_deleted_game_stays_listed_and_filterable():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Gone game')
+        assert client.post(f"/api/sessions/{started['id']}/end").status_code == 200
+        assert client.delete(f"/api/games/{started['game_id']}").status_code == 204
+        listed = client.get('/api/sessions').json()
+        assert any(item['id'] == started['id'] and item['game_title_snapshot'] == 'Gone game' for item in listed)
+        filtered = client.get(f"/api/sessions?game_id={started['game_id']}").json()
+        assert [item['id'] for item in filtered] == [started['id']]
+
+
+def test_session_list_requires_host():
+    with TestClient(app) as client:
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.get('/api/sessions').status_code == 401
+            assert client.get('/api/sessions?game_id=x').status_code == 401
+        finally:
+            settings.auth_disabled = previous
