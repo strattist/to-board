@@ -5,6 +5,7 @@
   let players = '';
   let outcomes = '';
   let message = '';
+  let messageFailed = false;
   let loadError = '';
   let confirmOpen = false;
   let ending = false;
@@ -33,8 +34,8 @@
   async function save() {
     try {
       const r = await fetch('/api/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ players: players.split('\n').map((x) => x.trim()).filter(Boolean), outcomes: outcomes.split('\n').map((x) => x.trim()).filter(Boolean) }) });
-      if (r.ok) { session = await r.json(); message = 'Saved.'; } else message = await detail(r, 'Could not save.');
-    } catch { message = 'Could not save.'; }
+      if (r.ok) { session = await r.json(); message = 'Saved.'; messageFailed = false; } else { message = await detail(r, 'Could not save.'); messageFailed = true; }
+    } catch { message = 'Could not save.'; messageFailed = true; }
   }
 
   async function openConfirm() {
@@ -88,10 +89,10 @@
     <p class="muted">{new Date(session.started_at).toLocaleString()} · {session.active ? 'Active' : 'Ended'}</p>
     {#if session.active}<a class="qr-link" href={'/session/' + session.id}>Show QR</a><button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
     {#if endError}<p role="alert" class="error">{endError}</p>{/if}
-    <label>Players (one per line, up to 12)<textarea bind:value={players} placeholder="Alex&#10;Camille&#10;Jordan"></textarea></label>
-    <label>Outcomes (one per line, in order, up to 20)<textarea bind:value={outcomes} placeholder="Jordan won"></textarea></label>
+    <label>Players (one per line, up to 12)<textarea bind:value={players} on:input={() => (message = '')} placeholder="Alex&#10;Camille&#10;Jordan"></textarea></label>
+    <label>Outcomes (one per line, in order, up to 20)<textarea bind:value={outcomes} on:input={() => (message = '')} placeholder="Jordan won"></textarea></label>
     <button type="button" class="primary" on:click={save}>Save</button>
-    {#if message}<p>{message}</p>{/if}
+    {#if message}<p role={messageFailed ? 'alert' : 'status'} class:error={messageFailed}>{message}</p>{/if}
   {/if}
 </section>
 

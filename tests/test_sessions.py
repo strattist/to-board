@@ -523,7 +523,9 @@ def test_session_metadata_is_trimmed_before_storing():
     ({'outcomes': ['']}, 'needs some text'),
     ({'players': ['x' * 101]}, 'at most 100'),
     ({'outcomes': ['x' * 201]}, 'at most 200'),
-], ids=['13-players', '21-outcomes', 'blank-player', 'blank-outcome', 'long-player', 'long-outcome'])
+    ({'players': ['Alex\nJordan']}, 'single line'),
+    ({'outcomes': ['Alex won\r\nJordan won']}, 'single line'),
+], ids=['13-players', '21-outcomes', 'blank-player', 'blank-outcome', 'long-player', 'long-outcome', 'multiline-player', 'multiline-outcome'])
 def test_invalid_session_metadata_is_rejected_and_leaves_stored_values_unchanged(payload, fragment):
     with TestClient(app) as client:
         started = _started_session(client, 'Meta invalid')
@@ -565,3 +567,38 @@ def test_session_metadata_requires_host_and_is_not_in_the_guest_room():
         finally:
             settings.auth_disabled = previous
         assert client.get(url).json()['players'] == ['Alex']
+
+
+def test_entries_of_exactly_the_maximum_length_are_accepted():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta boundary')
+        body = client.patch(f"/api/sessions/{started['id']}", json={'players': ['p' * 100], 'outcomes': ['o' * 200]})
+        assert body.status_code == 200
+        assert body.json()['players'] == ['p' * 100] and body.json()['outcomes'] == ['o' * 200]
+
+
+def test_session_metadata_save_failure_is_reported_and_keeps_previous_values(monkeypatch):
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta failure')
+        url = f"/api/sessions/{started['id']}"
+        client.patch(url, json={'players': ['Alex'], 'outcomes': ['Alex won']})
+
+        def fail_commit(self):
+            raise SQLAlchemyError('disk full')
+
+        with monkeypatch.context() as patched:
+            patched.setattr(Session, 'commit', fail_commit)
+            failed = client.patch(url, json={'players': ['Changed']})
+        assert failed.status_code == 500
+        assert 'could not be saved' in failed.json()['detail']
+        assert client.get(url).json()['players'] == ['Alex']
+
+
+def test_ended_guest_room_payload_carries_no_players_or_outcomes():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta ended room')
+        url = f"/api/sessions/{started['id']}"
+        client.patch(url, json={'players': ['Alex'], 'outcomes': ['Alex won']})
+        client.post(url + '/end')
+        room = client.get('/api/room/' + started['room_slug']).json()
+        assert set(room) == {'ended', 'game_title', 'room_slug'}

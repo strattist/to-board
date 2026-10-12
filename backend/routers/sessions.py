@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from backend.core.auth import require_host
 from backend.core.config import get_settings
@@ -32,6 +33,7 @@ def clean_entries(values: list[str] | None, label: str, max_count: int, max_leng
     if len(values) > max_count: raise HTTPException(422, f'A Session can have at most {max_count} {label}s.')
     cleaned = [item.strip() for item in values]
     if any(not item for item in cleaned): raise HTTPException(422, f'Each {label} needs some text.')
+    if any('\n' in item or '\r' in item for item in cleaned): raise HTTPException(422, f'Each {label} must be a single line.')
     if any(len(item) > max_length for item in cleaned): raise HTTPException(422, f'Each {label} can have at most {max_length} characters.')
     return cleaned
 
@@ -69,7 +71,12 @@ def update_session_record(session_id: str, body: SessionUpdate, session: Session
     if not record: raise HTTPException(404, 'Session not found.')
     players = clean_entries(body.players, 'player name', MAX_PLAYERS, MAX_PLAYER_LENGTH)
     outcomes = clean_entries(body.outcomes, 'outcome', MAX_OUTCOMES, MAX_OUTCOME_LENGTH)
-    update_metadata(record, players, outcomes); session.add(record); session.commit(); session.refresh(record)
+    try:
+        update_metadata(record, players, outcomes); session.add(record); session.commit(); session.refresh(record)
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception('Players and outcomes could not be saved for Session %s', session_id)
+        raise HTTPException(500, 'Players and outcomes could not be saved. The previous values are kept.') from exc
     return serialize(record)
 
 @router.post('/{session_id}/end')

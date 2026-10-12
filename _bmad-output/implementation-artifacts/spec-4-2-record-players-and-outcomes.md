@@ -41,6 +41,8 @@ context:
 - Decisions: per-entry caps 100 (player) / 200 (outcome) characters, server-side trim; validation lives in the router/service so the `detail` is a string the existing `detail()` helper in the form can show.
 - Changed: `backend/routers/sessions.py` (`clean_entries`: count, trim, blank and length checks before any write, string `detail`; the unused Pydantic `Field` limits were dropped so the limit message is ours), `frontend/src/components/SessionDetail.svelte` (players one per line in a textarea, labels state the limits), `tests/test_sessions.py` (+6 tests, 11 cases), `frontend/tests/session-detail.dom.test.ts` (+3). No schema change. Suite: 150 passed; frontend check, contracts and DOM (31) pass. Backend tests run with the repo `.venv` (`python3` on PATH resolves to another project's venv).
 - Review ran inline (no subagents authorized). Not committed (user instruction). Branch `feat/4-2-record-players-and-outcomes`; sprint-status 4-2 set to `review`, 4-1 to `done`.
+- Post-review patches (bmad-review): entries containing a line break are rejected with `422` (the form splits on newlines, so they would reload as several entries); a failed commit on `PATCH` rolls back and returns a clear `500` like create/end; the save message is `role=status` (or `alert` on failure) and clears on edit; tests added for exactly 100/200 characters, line-break rejection, commit failure and the ended Room payload keys. Suite: 155 passed, DOM 29 passed.
+- Not patched: last-write-wins across two tabs, duplicate players allowed (intentional: two guests may share a name), no read-only ordered list (4.4), 100/200 caps recorded here as a decision not in the PRD.
 
 ## Review Triage Log
 

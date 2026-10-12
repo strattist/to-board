@@ -120,7 +120,7 @@ describe('SessionDetail players and outcomes', () => {
     await fireEvent.input(players, { target: { value: 'Smith, Jo\n\n Alex ' } });
     await fireEvent.input(screen.getByLabelText(/Outcomes/), { target: { value: 'Alex won\nJo won' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await screen.findByText('Saved.');
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
     const patch = fn.mock.calls.find((c) => c[1]?.method === 'PATCH')!;
     expect(JSON.parse(patch[1]!.body as string)).toEqual({ players: ['Smith, Jo', 'Alex'], outcomes: ['Alex won', 'Jo won'] });
   });
@@ -131,8 +131,18 @@ describe('SessionDetail players and outcomes', () => {
     render(SessionDetail, { id: 's1' });
     await fireEvent.input(await screen.findByLabelText(/Players/), { target: { value: 'Alex' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('A Session can have at most 12 player names.')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('A Session can have at most 12 player names.');
     expect(screen.getByLabelText(/Players/)).toHaveValue('Alex');
+  });
+
+  it('clears the save message when the form is edited again', async () => {
+    const fn = vi.fn((_url: string, init?: RequestInit) => (init?.method === 'PATCH' ? res(active) : res(active)));
+    vi.stubGlobal('fetch', fn);
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await screen.findByRole('status');
+    await fireEvent.input(screen.getByLabelText(/Players/), { target: { value: 'Alex' } });
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('keeps the players and outcomes form editable on an ended Session', async () => {
