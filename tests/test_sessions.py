@@ -468,3 +468,100 @@ def test_compose_persists_data_only_through_dataset_bind_mounts():
             bind_targets.append(next(item for item in block if item.startswith('target:')).split(':', 1)[1].strip())
     assert sorted(bind_targets) == ['/data/db', '/data/uploads']
     assert not any(':/data/' in line for line in lines), 'short-form volume entries could name Docker-managed volumes'
+
+
+def _started_session(client, title):
+    game = _published_game(client, title)
+    return client.post(f"/api/sessions?game_id={game['id']}").json()
+
+
+def test_players_and_outcomes_are_saved_in_order_and_survive_a_restart():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta saved')
+        assert started['players'] == [] and started['outcomes'] == []
+        players = ['Zoe', 'Alex', 'Smith, Jo']
+        outcomes = ['Jordan won', 'Alex won', 'Jordan won']
+        response = client.patch(f"/api/sessions/{started['id']}", json={'players': players, 'outcomes': outcomes})
+        assert response.status_code == 200
+        assert response.json()['players'] == players
+        assert response.json()['outcomes'] == outcomes
+
+    _restart_application()
+
+    with TestClient(app) as client:
+        reloaded = client.get(f"/api/sessions/{started['id']}").json()
+        assert reloaded['players'] == players
+        assert reloaded['outcomes'] == outcomes
+        assert client.get(f"/api/sessions?game_id={started['game_id']}").json()[0]['outcomes'] == outcomes
+
+
+def test_session_metadata_accepts_the_limits_zero_outcomes_and_partial_updates():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta limits')
+        url = f"/api/sessions/{started['id']}"
+        full = client.patch(url, json={'players': [f'P{i}' for i in range(12)], 'outcomes': [f'O{i}' for i in range(20)]})
+        assert full.status_code == 200
+        assert len(full.json()['players']) == 12 and len(full.json()['outcomes']) == 20
+        only_players = client.patch(url, json={'players': ['Solo']}).json()
+        assert only_players['players'] == ['Solo']
+        assert len(only_players['outcomes']) == 20
+        cleared = client.patch(url, json={'outcomes': []}).json()
+        assert cleared['outcomes'] == [] and cleared['players'] == ['Solo']
+
+
+def test_session_metadata_is_trimmed_before_storing():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta trim')
+        body = client.patch(f"/api/sessions/{started['id']}", json={'players': ['  Alex  '], 'outcomes': [' Alex won ']}).json()
+        assert body['players'] == ['Alex'] and body['outcomes'] == ['Alex won']
+
+
+@pytest.mark.parametrize('payload,fragment', [
+    ({'players': [f'P{i}' for i in range(13)]}, 'at most 12'),
+    ({'outcomes': [f'O{i}' for i in range(21)]}, 'at most 20'),
+    ({'players': ['Alex', '   ']}, 'needs some text'),
+    ({'outcomes': ['']}, 'needs some text'),
+    ({'players': ['x' * 101]}, 'at most 100'),
+    ({'outcomes': ['x' * 201]}, 'at most 200'),
+], ids=['13-players', '21-outcomes', 'blank-player', 'blank-outcome', 'long-player', 'long-outcome'])
+def test_invalid_session_metadata_is_rejected_and_leaves_stored_values_unchanged(payload, fragment):
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta invalid')
+        url = f"/api/sessions/{started['id']}"
+        client.patch(url, json={'players': ['Alex'], 'outcomes': ['Alex won']})
+        response = client.patch(url, json={'players': ['Changed'], 'outcomes': ['Changed'], **payload})
+        assert response.status_code == 422
+        assert isinstance(response.json()['detail'], str) and fragment in response.json()['detail']
+        stored = client.get(url).json()
+        assert stored['players'] == ['Alex'] and stored['outcomes'] == ['Alex won']
+
+
+def test_players_and_outcomes_can_be_edited_after_the_session_has_ended():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta ended')
+        url = f"/api/sessions/{started['id']}"
+        ended = client.post(url + '/end').json()
+        response = client.patch(url, json={'players': ['Late Alex'], 'outcomes': ['Round 1', 'Round 2']})
+        assert response.status_code == 200
+        body = response.json()
+        assert body['players'] == ['Late Alex'] and body['outcomes'] == ['Round 1', 'Round 2']
+        assert body['active'] is False and body['ended_at'] == ended['ended_at']
+        assert client.get('/api/room/' + started['room_slug']).json()['ended'] is True
+
+
+def test_session_metadata_requires_host_and_is_not_in_the_guest_room():
+    with TestClient(app) as client:
+        started = _started_session(client, 'Meta host only')
+        url = f"/api/sessions/{started['id']}"
+        client.patch(url, json={'players': ['Alex'], 'outcomes': ['Alex won']})
+        room = client.get('/api/room/' + started['room_slug'])
+        assert 'Alex' not in room.text
+        settings = get_settings()
+        previous = settings.auth_disabled
+        settings.auth_disabled = False
+        try:
+            assert client.patch(url, json={'players': ['Mallory']}).status_code == 401
+            assert client.get(url).status_code == 401
+        finally:
+            settings.auth_disabled = previous
+        assert client.get(url).json()['players'] == ['Alex']

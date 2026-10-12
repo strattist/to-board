@@ -23,7 +23,7 @@
       const r = await fetch('/api/sessions/' + id);
       if (!r.ok) throw new Error(await detail(r, 'This session could not be loaded.'));
       session = await r.json();
-      players = session.players.join(', ');
+      players = session.players.join('\n');
       outcomes = session.outcomes.join('\n');
     } catch (e) {
       loadError = e instanceof Error && e.message ? e.message : 'This session could not be loaded.';
@@ -32,7 +32,7 @@
 
   async function save() {
     try {
-      const r = await fetch('/api/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ players: players.split(',').map((x) => x.trim()).filter(Boolean), outcomes: outcomes.split('\n').map((x) => x.trim()).filter(Boolean) }) });
+      const r = await fetch('/api/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ players: players.split('\n').map((x) => x.trim()).filter(Boolean), outcomes: outcomes.split('\n').map((x) => x.trim()).filter(Boolean) }) });
       if (r.ok) { session = await r.json(); message = 'Saved.'; } else message = await detail(r, 'Could not save.');
     } catch { message = 'Could not save.'; }
   }
@@ -88,8 +88,8 @@
     <p class="muted">{new Date(session.started_at).toLocaleString()} · {session.active ? 'Active' : 'Ended'}</p>
     {#if session.active}<a class="qr-link" href={'/session/' + session.id}>Show QR</a><button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
     {#if endError}<p role="alert" class="error">{endError}</p>{/if}
-    <label>Players<input bind:value={players} placeholder="Alex, Camille, Jordan"/></label>
-    <label>Outcomes<textarea bind:value={outcomes} placeholder="Jordan won"></textarea></label>
+    <label>Players (one per line, up to 12)<textarea bind:value={players} placeholder="Alex&#10;Camille&#10;Jordan"></textarea></label>
+    <label>Outcomes (one per line, in order, up to 20)<textarea bind:value={outcomes} placeholder="Jordan won"></textarea></label>
     <button type="button" class="primary" on:click={save}>Save</button>
     {#if message}<p>{message}</p>{/if}
   {/if}
@@ -116,8 +116,8 @@
   .qr-link{display:inline-flex;align-items:center;min-height:44px;width:max-content;color:#a277ff}
   .error{color:#ff6767;margin:0}
   .page label{display:flex;flex-direction:column;gap:8px}
-  .page input,.page textarea{background:#1e1c27;border:1px solid #29263c;color:#edecee;padding:10px}
-  .page textarea{min-height:120px}
+  .page textarea{background:#1e1c27;border:1px solid #29263c;color:#edecee;padding:10px}
+  .page textarea{min-height:120px;font:inherit}
   .primary,.danger,.ghost,.confirm{min-height:44px;padding:10px 20px;border-radius:10px;cursor:pointer}
   .primary,.danger{width:max-content}
   .primary{background:#a277ff;border:0}

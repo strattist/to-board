@@ -108,3 +108,37 @@ describe('SessionDetail end flow', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Session could not be ended');
   });
 });
+
+describe('SessionDetail players and outcomes', () => {
+  it('saves one player per line, keeps commas inside a name, and shows saved order', async () => {
+    const saved = { ...active, players: ['Smith, Jo', 'Alex'], outcomes: ['Alex won', 'Jo won'] };
+    const fn = vi.fn((_url: string, init?: RequestInit) => (init?.method === 'PATCH' ? res(saved) : res({ ...active, players: ['Zoe'], outcomes: [] })));
+    vi.stubGlobal('fetch', fn);
+    render(SessionDetail, { id: 's1' });
+    const players = await screen.findByLabelText(/Players/);
+    expect(players).toHaveValue('Zoe');
+    await fireEvent.input(players, { target: { value: 'Smith, Jo\n\n Alex ' } });
+    await fireEvent.input(screen.getByLabelText(/Outcomes/), { target: { value: 'Alex won\nJo won' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved.');
+    const patch = fn.mock.calls.find((c) => c[1]?.method === 'PATCH')!;
+    expect(JSON.parse(patch[1]!.body as string)).toEqual({ players: ['Smith, Jo', 'Alex'], outcomes: ['Alex won', 'Jo won'] });
+  });
+
+  it('shows the server message and keeps the form when a save is rejected', async () => {
+    const fn = vi.fn((_url: string, init?: RequestInit) => (init?.method === 'PATCH' ? res({ detail: 'A Session can have at most 12 player names.' }, false, 422) : res(active)));
+    vi.stubGlobal('fetch', fn);
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.input(await screen.findByLabelText(/Players/), { target: { value: 'Alex' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('A Session can have at most 12 player names.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Players/)).toHaveValue('Alex');
+  });
+
+  it('keeps the players and outcomes form editable on an ended Session', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => res(ended)));
+    render(SessionDetail, { id: 's1' });
+    expect(await screen.findByLabelText(/Players/)).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+});
