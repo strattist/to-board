@@ -47,3 +47,5 @@ context:
 - low (rejected): filter options come from Sessions only, so a Game with no Sessions is not listed -- nothing to filter to.
 - low (rejected): no pagination for very long logs -- not in the acceptance criteria; single Host LAN scale.
 - low (rejected): Session Log rows are not responsive-polished or table-structured -- Story 4.4 owns presentation.
+- low (patched after bmad-review): Games sharing a title get filter labels with their last played date; non-array API bodies show the load error; unparsable dates read `Unknown date` and the date now includes the time; the load error offers Try again; outcome lists are labelled by the entry heading; the stale-response guard, newest-first render order, duplicate-title labels, retry and non-list body now have DOM tests; the tie-break test seeds timezone-aware datetimes.
+- low (rejected after bmad-review): pagination (out of scope, noted above); whole-entry link target; empty `game_id` is treated as no filter on purpose.

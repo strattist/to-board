@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 import re
@@ -614,7 +614,7 @@ def _seed_sessions(rows):
 def test_session_list_is_newest_first_with_a_stable_tie_break():
     with TestClient(app) as client:
         game = _published_game(client, 'Log order')
-        base = datetime(2026, 1, 1, 12, 0, 0)
+        base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         tag = uuid4().hex[:6]
         _seed_sessions([
             {'id': f'{tag}-a', 'game_id': game['id'], 'game_title_snapshot': 'Log order', 'room_slug': f'{tag}-a', 'started_at': base, 'ended_at': base + timedelta(hours=1)},
