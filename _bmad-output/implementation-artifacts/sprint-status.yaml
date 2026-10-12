@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-20-2026 21:31
-last_updated: 10-12-2026 21:20
+last_updated: 10-12-2026 22:12
 project: to-board
 project_key: NOKEY
 tracking_system: file-system
@@ -65,8 +65,8 @@ development_status:
   4-1-persist-session-records-reliably: done
   4-2-record-players-and-outcomes: done
   4-3-browse-and-filter-session-history: done
-  4-4-present-a-durable-session-history-experience: review
-  epic-4-retrospective: optional
+  4-4-present-a-durable-session-history-experience: done
+  epic-4-retrospective: done
 
   epic-5: backlog
   5-1-host-auth-and-review-hardening: backlog
@@ -147,3 +147,48 @@ action_items:
     owner: "Baptiste"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-11.md"
+  - id: "epic-4-retro-item-12-fix-link-colours-on-session-log-row-titl"
+    epic: 4
+    action: "Fix link colours on Session Log row titles and Session Detail back link
+      (1.79:1 and 1.95:1, need 4.5:1); add contract assertion and re-check in a real
+      browser"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"
+  - id: "epic-4-retro-item-13-reconcile-spec-add-4-2-per-entry-caps-10"
+    epic: 4
+    action: "Reconcile spec: add 4.2 per-entry caps (100/200 chars) and single-line
+      rule to epics.md Story 4.2 / FR-16"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"
+  - id: "epic-4-retro-item-14-first-run-on-the-real-truenas-stack-comp"
+    epic: 4
+    action: "First run on the real TrueNAS stack: compose down/up keeps Session history,
+      SSE through nginx, Room load time (combines Epic 3 item 18 and Epic 4 durability
+      gap)"
+    owner: "Baptiste"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"
+  - id: "epic-4-retro-item-15-decide-whether-a-real-browser-smoke-over"
+    epic: 4
+    action: "Decide whether a real-browser smoke (overflow at 375/768 plus computed
+      contrast) becomes a repeatable gate for UI stories, or record it as a manual
+      step in AGENTS.md"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"
+  - id: "epic-4-retro-item-16-process-add-rendered-style-checks-contra"
+    epic: 4
+    action: "Process: add rendered-style checks (contrast, computed focus) to the
+      review lens list for UI stories"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"
+  - id: "epic-4-retro-item-17-tracking-hygiene-commit-the-4-4-done-fli"
+    epic: 4
+    action: "Tracking hygiene: commit the 4-4 done flip and set epic-4 to done via
+      sprint planning"
+    owner: "Baptiste"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-12.md"

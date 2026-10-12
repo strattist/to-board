@@ -877,12 +877,13 @@ So that a game night with repeated plays is recorded accurately.
 
 **Given** I enter up to 12 free-text player names  
 **When** I save the Session  
-**Then** each name is retained as entered after normal validation  
+**Then** each name is retained as entered after normal validation (surrounding whitespace is trimmed; a name is a single line of at most 100 characters)  
 **And** the system does not require player accounts or profile links.
 
 **Given** I enter up to 20 ordered free-text outcome entries such as “Alex won” and “Jordan won”  
 **When** I save the Session  
 **Then** every entry is stored and displayed as Session metadata in order  
+**And** each entry is a single line of at most 200 characters, surrounding whitespace trimmed  
 **And** entries can represent repeated plays without creating a new Session  
 **And** zero outcome entries remains allowed.
 
