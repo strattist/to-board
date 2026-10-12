@@ -159,6 +159,7 @@
   .state.active{border-color:#a277ff}
   .page textarea{width:100%}
   .muted{color:#9a97a8;margin:0}
+  .page>a{color:#a277ff}
   .qr-link{display:inline-flex;align-items:center;min-height:44px;width:max-content;color:#a277ff}
   .error{color:#ff6767;margin:0}
   .page label{display:flex;flex-direction:column;gap:8px}

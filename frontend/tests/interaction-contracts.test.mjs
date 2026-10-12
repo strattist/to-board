@@ -571,3 +571,8 @@ assert.match(sessionDetailSource, /overflow-wrap:anywhere/);
 assert.match(sessionDetailSource, /button:focus-visible\{outline:2px solid #a277ff/);
 assert.match(appSource, /:global\(\.app a:focus-visible\),:global\(\.app input:focus-visible\),:global\(\.app select:focus-visible\),:global\(\.app textarea:focus-visible\)\{outline:2px solid #a277ff/);
 console.log('session page presentation contracts passed');
+
+// Story 4.4 follow-up: links must not fall back to the default blue (1.8:1 on the dark surface).
+assert.match(sessionLogSource, /\.row \{[^}]*color: #edecee/);
+assert.match(sessionDetailSource, /\.page>a\{color:#a277ff\}/);
+console.log('session page link colour contracts passed');

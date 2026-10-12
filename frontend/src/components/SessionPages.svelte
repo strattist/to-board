@@ -111,7 +111,7 @@
   .filter { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
   .log { list-style: none; margin: 0; padding: 0; }
   .log > li { background: #1e1c27; border-bottom: 1px solid #29263c; }
-  .row { display: flex; flex-direction: column; gap: 6px; padding: 16px; text-decoration: none; }
+  .row { display: flex; flex-direction: column; gap: 6px; padding: 16px; text-decoration: none; color: #edecee; }
   .head { display: flex; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
   .line, .outcomes { overflow-wrap: anywhere; }
   .state { display: inline-block; margin-left: 6px; padding: 1px 8px; border: 1px solid #453b62; border-radius: 999px; color: #edecee; }

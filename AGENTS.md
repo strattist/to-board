@@ -75,6 +75,7 @@ To verify the deployed stack locally, prepare `.env` and the bind-mounted data d
 - Every story has a spec artifact in `_bmad-output/implementation-artifacts/` before it is marked `done`.
 - An acceptance criterion that is dropped or changed is recorded in the story spec and in `deferred-work.md` (or reconciled in `epics.md`) before the story is marked `done`; a commit message alone is not a record.
 - Remove an entry from `deferred-work.md` when the story that resolves it ships.
+- A story that changes visible Host or Guest UI is not `done` on DOM and source-text tests alone: check the changed pages once in a real browser at 375px and a desktop width (no horizontal overflow, computed text contrast of at least 4.5:1, visible focus ring) and record the result in the story spec. Review lenses for such a story include contrast and computed focus state.
 
 ## Git
 
