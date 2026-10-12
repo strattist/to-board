@@ -3,7 +3,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from backend.core.auth import require_host
 from backend.core.config import get_settings
@@ -18,9 +19,23 @@ router = APIRouter(prefix='/api/sessions', tags=['sessions'])
 class SessionCreate(BaseModel):
     game_id: str
 
+MAX_PLAYERS = 12
+MAX_OUTCOMES = 20
+MAX_PLAYER_LENGTH = 100
+MAX_OUTCOME_LENGTH = 200
+
 class SessionUpdate(BaseModel):
-    players: Optional[list[str]] = Field(default=None, max_length=12)
-    outcomes: Optional[list[str]] = Field(default=None, max_length=20)
+    players: Optional[list[str]] = None
+    outcomes: Optional[list[str]] = None
+
+def clean_entries(values: list[str] | None, label: str, max_count: int, max_length: int) -> list[str] | None:
+    if values is None: return None
+    if len(values) > max_count: raise HTTPException(422, f'A Session can have at most {max_count} {label}s.')
+    cleaned = [item.strip() for item in values]
+    if any(not item for item in cleaned): raise HTTPException(422, f'Each {label} needs some text.')
+    if any('\n' in item or '\r' in item for item in cleaned): raise HTTPException(422, f'Each {label} must be a single line.')
+    if any(len(item) > max_length for item in cleaned): raise HTTPException(422, f'Each {label} can have at most {max_length} characters.')
+    return cleaned
 
 def utc_iso(value: datetime | None) -> str | None:
     if value is None: return None
@@ -54,9 +69,14 @@ def get_session_record(session_id: str, session: Session = Depends(get_session),
 def update_session_record(session_id: str, body: SessionUpdate, session: Session = Depends(get_session), _host=Depends(require_host)):
     record = session.get(GameSession, session_id)
     if not record: raise HTTPException(404, 'Session not found.')
-    for values in (body.players, body.outcomes):
-        if values is not None and any(not item.strip() for item in values): raise HTTPException(422, 'Names and outcomes cannot be empty.')
-    update_metadata(record, body.players, body.outcomes); session.add(record); session.commit(); session.refresh(record)
+    players = clean_entries(body.players, 'player name', MAX_PLAYERS, MAX_PLAYER_LENGTH)
+    outcomes = clean_entries(body.outcomes, 'outcome', MAX_OUTCOMES, MAX_OUTCOME_LENGTH)
+    try:
+        update_metadata(record, players, outcomes); session.add(record); session.commit(); session.refresh(record)
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception('Players and outcomes could not be saved for Session %s', session_id)
+        raise HTTPException(500, 'Players and outcomes could not be saved. The previous values are kept.') from exc
     return serialize(record)
 
 @router.post('/{session_id}/end')
