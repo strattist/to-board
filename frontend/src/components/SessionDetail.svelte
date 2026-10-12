@@ -1,19 +1,24 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { tick } from 'svelte';
+  import type { Session } from '../lib/api';
   import { formatWhen } from '../lib/session-format';
   export let id = '';
-  let session: any = null;
+  let session: Session | null = null;
   let players = '';
   let outcomes = '';
   let message = '';
   let messageFailed = false;
   let loadError = '';
   let loading = true;
+  let saving = false;
+  let loaded = '';
+  let request = 0;
   let confirmOpen = false;
   let ending = false;
   let endError = '';
   let heading: HTMLHeadingElement | undefined;
   const SAVE_FAILED = 'Players and outcomes could not be saved. Your changes are still in the form.';
+  const SAVED_NOT_REFRESHED = 'Players and outcomes were saved, but the summary could not be refreshed. Reload the page to see them.';
   const END_FAILED = 'Session could not be ended. The Room is still open.';
   let endButton: HTMLButtonElement | undefined;
   let cancelButton: HTMLButtonElement | undefined;
@@ -22,25 +27,44 @@
     try { const d = (await r.json()).detail; return typeof d === 'string' && d ? d : fallback; } catch { return fallback; }
   }
 
-  onMount(async () => {
+  function seed(next: Session) {
+    session = next;
+    players = next.players.join('\n');
+    outcomes = next.outcomes.join('\n');
+  }
+
+  async function load(target: string) {
+    const current = ++request;
+    loading = true;
+    loadError = '';
+    session = null;
     try {
-      const r = await fetch('/api/sessions/' + id);
+      const r = await fetch('/api/sessions/' + target);
       if (!r.ok) throw new Error(await detail(r, 'This session could not be loaded.'));
-      session = await r.json();
-      players = session.players.join('\n');
-      outcomes = session.outcomes.join('\n');
+      const next = await r.json();
+      if (current === request) seed(next);
     } catch (e) {
-      loadError = e instanceof Error && e.message ? e.message : 'This session could not be loaded.';
+      if (current === request) loadError = e instanceof Error && e.message ? e.message : 'This session could not be loaded.';
     } finally {
-      loading = false;
+      if (current === request) loading = false;
     }
-  });
+  }
+
+  // Reload when the route points at another Session without remounting this component.
+  $: if (id !== loaded) { loaded = id; void load(id); }
 
   async function save() {
+    if (saving) return;
+    saving = true;
+    message = '';
     try {
       const r = await fetch('/api/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ players: players.split('\n').map((x) => x.trim()).filter(Boolean), outcomes: outcomes.split('\n').map((x) => x.trim()).filter(Boolean) }) });
-      if (r.ok) { session = await r.json(); message = 'Players and outcomes saved.'; messageFailed = false; } else { message = await detail(r, SAVE_FAILED); messageFailed = true; }
+      if (r.ok) {
+        try { seed(await r.json()); message = 'Players and outcomes saved.'; } catch { message = SAVED_NOT_REFRESHED; }
+        messageFailed = false;
+      } else { message = await detail(r, SAVE_FAILED); messageFailed = true; }
     } catch { message = SAVE_FAILED; messageFailed = true; }
+    saving = false;
   }
 
   async function openConfirm() {
@@ -89,10 +113,10 @@
 
 <section class="page" inert={confirmOpen}><a href="/sessions">← Session Log</a>
   {#if loading}<p role="status" aria-live="polite" class="muted">Loading session…</p>{/if}
-  {#if loadError}<p role="alert" class="error">{loadError}</p>{/if}
+  {#if loadError}<p role="alert" class="error">{loadError}</p><button type="button" class="ghost retry" on:click={() => load(id)}>Try again</button>{/if}
   {#if session}
     <h1 tabindex="-1" bind:this={heading}>{session.game_title_snapshot}</h1>
-    <p class="muted">{formatWhen(session.started_at)} <span class="state" class:active={session.active}>{session.active ? 'Active' : 'Ended'}</span></p>
+    <p class="muted">{formatWhen(session.started_at, true)} <span class="state" class:active={session.active}>{session.active ? 'Active' : 'Ended'}</span></p>
     {#if session.active}<a class="qr-link" href={'/session/' + session.id}>Show QR</a><button type="button" class="danger" bind:this={endButton} on:click={openConfirm}>End session</button>{/if}
     {#if endError}<p role="alert" class="error">{endError}</p>{/if}
     <div class="saved">
@@ -103,7 +127,7 @@
     </div>
     <label>Players (one per line, up to 12)<textarea bind:value={players} on:input={() => (message = '')} placeholder="Alex&#10;Camille&#10;Jordan"></textarea></label>
     <label>Outcomes (one per line, in order, up to 20)<textarea bind:value={outcomes} on:input={() => (message = '')} placeholder="Jordan won"></textarea></label>
-    <button type="button" class="primary" on:click={save}>Save</button>
+    <button type="button" class="primary" disabled={saving} on:click={save}>{saving ? 'Saving…' : 'Save'}</button>
     {#if message}<p role={messageFailed ? 'alert' : 'status'} class:error={messageFailed}>{message}</p>{/if}
   {/if}
 </section>
@@ -125,7 +149,9 @@
   .page{padding:32px;max-width:700px;margin:auto;display:flex;flex-direction:column;gap:16px}
   .page h1{font-size:32px;margin-bottom:0}
   .page h1:focus{outline:none}
-  .page{min-width:0;overflow-wrap:anywhere}
+  .page{min-width:0}
+  .page h1,.saved li,.page label,.page p{overflow-wrap:anywhere}
+  .retry{width:max-content}
   .page h2{font-size:18px;margin:0 0 8px}
   .saved{background:#1e1c27;border:1px solid #29263c;border-radius:12px;padding:16px}
   .saved ul,.saved ol{margin:0 0 16px;padding-left:24px}.saved p{margin:0 0 16px}

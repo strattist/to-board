@@ -124,5 +124,15 @@ describe('Session Log presentation', () => {
     expect(screen.getByText('Ended')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
-});
 
+  it('keeps the heading visible while loading and never prints Invalid Date', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(SessionPages);
+    expect(screen.getByRole('heading', { name: 'Session Log' })).toBeInTheDocument();
+    cleanup();
+    mockApi(() => res([{ ...older, started_at: 'not a date' }]));
+    render(SessionPages);
+    expect(await screen.findByText(/Unknown date/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Invalid Date/);
+  });
+});

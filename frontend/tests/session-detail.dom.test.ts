@@ -196,3 +196,57 @@ describe('SessionDetail presentation', () => {
   });
 });
 
+describe('SessionDetail hardening', () => {
+  it('keeps the page chrome visible while loading and offers Try again after a load failure', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(() => (++calls === 1 ? res({ detail: 'This session could not be loaded.' }, false, 500) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    expect(screen.getByRole('link', { name: /Session Log/ })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be loaded');
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Wingspan' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('sends one PATCH while a save is pending and disables Save', async () => {
+    let resolve!: (v: unknown) => void;
+    const fn = vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? new Promise((r) => { resolve = r; }) : res(active)));
+    vi.stubGlobal('fetch', fn);
+    render(SessionDetail, { id: 's1' });
+    const save = await screen.findByRole('button', { name: 'Save' });
+    await fireEvent.click(save);
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Saving…' }));
+    expect(fn.mock.calls.filter((c) => c[1]?.method === 'PATCH')).toHaveLength(1);
+    resolve({ ok: true, status: 200, json: () => Promise.resolve(active) });
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  it('re-seeds the form from the normalized saved values', async () => {
+    const saved = { ...active, players: ['Alex'], outcomes: ['Alex won'] };
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? res(saved) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.input(await screen.findByLabelText(/Players/), { target: { value: '  Alex  \n\n' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Players and outcomes saved.');
+    expect(screen.getByLabelText(/Players/)).toHaveValue('Alex');
+    expect(screen.getByRole('status').textContent).not.toMatch(/!/);
+  });
+
+  it('reports a saved Session whose response cannot be read without claiming failure', async () => {
+    const bad = { ok: true, status: 200, json: () => Promise.reject(new Error('bad json')) };
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => (init?.method === 'PATCH' ? Promise.resolve(bad) : res(active))));
+    render(SessionDetail, { id: 's1' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('were saved, but the summary could not be refreshed');
+  });
+
+  it('loads the new Session when the id changes', async () => {
+    const fn = vi.fn((url: string) => res(url.endsWith('/s2') ? { ...active, id: 's2', game_title_snapshot: 'Azul' } : active));
+    vi.stubGlobal('fetch', fn);
+    const { rerender } = render(SessionDetail, { id: 's1' });
+    await screen.findByRole('heading', { name: 'Wingspan' });
+    await rerender({ id: 's2' });
+    expect(await screen.findByRole('heading', { name: 'Azul' })).toBeInTheDocument();
+  });
+});

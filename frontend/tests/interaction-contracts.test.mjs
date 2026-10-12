@@ -561,3 +561,13 @@ const markdownSource = readFileSync(new URL('../src/lib/Markdown.svelte', import
 assert.match(markdownSource, /overflow-wrap: anywhere/);
 assert.match(markdownSource, /max-width: 100%/);
 assert.doesNotMatch(markdownSource, /overflow-x\s*:\s*(auto|scroll)/);
+
+// Story 4.4: Session pages keep long text inside the viewport and inherit the Host focus ring.
+const sessionLogSource = readFileSync(new URL('../src/components/SessionPages.svelte', import.meta.url), 'utf8');
+assert.match(sessionLogSource, /\.page \{[^}]*min-width: 0/);
+assert.match(sessionLogSource, /\.head \{[^}]*overflow-wrap: anywhere/);
+assert.match(sessionDetailSource, /\.page\{min-width:0\}/);
+assert.match(sessionDetailSource, /overflow-wrap:anywhere/);
+assert.match(sessionDetailSource, /button:focus-visible\{outline:2px solid #a277ff/);
+assert.match(appSource, /:global\(\.app a:focus-visible\),:global\(\.app input:focus-visible\),:global\(\.app select:focus-visible\),:global\(\.app textarea:focus-visible\)\{outline:2px solid #a277ff/);
+console.log('session page presentation contracts passed');
